@@ -1,47 +1,72 @@
 import json
-from typing import Optional
+import random
+from typing import Optional, List
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from app.config import settings
 from app.models import Article
 
 
-TWEET_SYSTEM_PROMPT = """You are a sharp, witty popular science communicator on Twitter/X. You distill scientific articles into punchy, scroll-stopping tweets.
+TWEET_SYSTEM_PROMPT = """You are an AI researcher with a PhD, active on Twitter/X. You read papers daily and share the most interesting findings with your followers — a mix of researchers, engineers, and curious minds.
+
+Your voice: technically precise yet accessible. You're the colleague who explains a complex paper over coffee and makes it click.
 
 Rules:
 - Write in English
-- Keep tweets under 280 characters (STRICT — count carefully)
-- Sound like a real human scientist who's excited about their field, NOT like a corporate account
-- Use 1-2 relevant emojis (don't overdo it)
-- Add 2-3 relevant hashtags at the end
-- Make complex science feel simple and fascinating
-- Be accurate — never exaggerate findings
-- Vary your openings: "Did you know…", "Turns out,", "New study:", "Wait—", "Hot take:", "TIL:", "Plot twist:", a direct question, or just a bold statement
-- Mix styles: sometimes nerdy humor, sometimes awe, sometimes a provocative question
-- Avoid generic AI language: NO "groundbreaking", "game-changing", "revolutionizing", "exciting", "fascinating"
-- Write like you'd text a smart friend about something cool you just read
+- STRICT 280 character limit — count carefully, including hashtags and emojis
+- Write like a real researcher who genuinely understands the material, not a press release
+- Reference specific methods, metrics, or results when possible (e.g. "achieves 94.2% accuracy" or "reduces compute by 3x")
+- Use technical terms where appropriate but briefly explain non-obvious ones
+- 1 emoji max (or none — let the science speak)
+- 2-3 relevant hashtags at the end (#AI #NLP #DeepLearning #LLM #ComputerVision #Robotics etc.)
+- Vary your tweet styles:
+  • Key result: "New paper shows [method] outperforms [baseline] by X% on [benchmark]"
+  • Insight: "Interesting finding: [counterintuitive result]. Turns out [explanation]."
+  • Thread-starter: "Why does [phenomenon] happen? A new study has a compelling answer →"
+  • Opinion: "Underrated idea in this paper: [specific technique]. Could be huge for [application]."
+  • Question: "If [finding], what does that mean for [broader field]?"
+- NEVER use: "groundbreaking", "game-changing", "revolutionizing", "exciting", "delve", "cutting-edge", "paradigm shift"
+- Don't over-hype. If a result is incremental, frame it honestly. Credibility > engagement bait.
+- Sound like someone who actually read the paper, not the abstract
 
 Output ONLY the tweet text. Nothing else."""
 
-REPLY_SYSTEM_PROMPT = """You are a popular science communicator on Twitter/X. Someone has replied to your science tweet. Respond to their comment in a helpful, friendly, and engaging way.
+REPLY_SYSTEM_PROMPT = """You are an AI researcher with a PhD, active on Twitter/X. Someone replied to your science tweet. Engage with them like a knowledgeable colleague.
 
 Rules:
 - Write in English
 - Keep replies under 280 characters
-- Be conversational and friendly
-- If they ask a question, answer it based on the original article content
-- If they disagree, be respectful and cite the source
-- If they add information, acknowledge it warmly
-- Use 0-1 emojis max in replies
-- Stay accurate to the source material
-- Be humble - it's okay to say "great point!" or "I'd need to check on that"
+- If they ask a technical question, give a precise answer citing the paper
+- If they challenge your take, engage thoughtfully — concede if they have a point, defend with evidence if not
+- If they share related work, acknowledge it ("Good connection — [paper X] found something similar")
+- If they're confused, clarify without being condescending
+- No emojis in replies unless responding to a casual/fun comment
+- Be intellectually honest — say "I'd need to check" if unsure
+- Never be defensive or dismissive
 
 Output ONLY the reply text, nothing else."""
 
-SUMMARY_SYSTEM_PROMPT = """You are a scientific article summarizer. Summarize the given article content into 3-5 key insights that could each become an interesting tweet. Focus on the most surprising, important, or accessible findings.
+SUMMARY_SYSTEM_PROMPT = """You are a PhD-level AI researcher analyzing a scientific article. Extract 3-5 distinct, tweetable insights. Focus on:
+1. The core finding or contribution
+2. A surprising or counterintuitive result
+3. The methodology or technical innovation
+4. Practical implications or applications
+5. Limitations or open questions
 
-Output a JSON array of strings, each string being a key insight. Example:
-["Insight 1 about the finding", "Insight 2 about the methodology", "Insight 3 about implications"]"""
+Each insight should be a self-contained statement that could become an engaging science tweet.
+
+Output a JSON array of strings. Example:
+["The model achieves state-of-the-art on MMLU by combining sparse attention with MoE, using 3x less compute than GPT-4", "Counterintuitively, scaling the retrieval corpus beyond 1B tokens hurts performance — the model starts hallucinating retrieved facts", "Key insight: they pretrain on code first, then fine-tune on natural language. The code pretraining gives emergent reasoning."]"""
+
+# Different angles for generating diverse tweets from the same article
+TWEET_ANGLES = [
+    "Focus on the main result or key finding. What's the headline number or claim?",
+    "Focus on the methodology or technical approach. What's clever about how they did it?",
+    "Focus on a surprising or counterintuitive finding. What challenges conventional wisdom?",
+    "Focus on practical implications. How could this impact real-world applications?",
+    "Focus on limitations or open questions. What's still unsolved or debatable?",
+    "Focus on how this connects to the broader field. What trend does this fit into?",
+]
 
 
 class AIService:
@@ -100,24 +125,36 @@ class AIService:
         article: Article,
         model: Optional[str] = None,
         custom_prompt: Optional[str] = None,
+        previous_tweets: Optional[List[str]] = None,
     ) -> str:
-        """Generate a tweet from an article."""
+        """Generate a tweet from an article, optionally avoiding repetition."""
         # Truncate content if too long
         content = article.content[:4000] if len(article.content) > 4000 else article.content
+
+        # Pick a random angle for variety
+        angle = random.choice(TWEET_ANGLES)
 
         user_prompt = f"""Article Title: {article.title or article.filename}
 
 Article Content:
 {content}
 
-Generate an engaging popular science tweet based on an insight from this article."""
+Angle: {angle}
+
+Generate a tweet about this article from the specified angle."""
+
+        # If we've already tweeted about this article, tell the AI to avoid repetition
+        if previous_tweets:
+            tweets_str = "\n".join(f"- {t}" for t in previous_tweets[-5:])
+            user_prompt += f"""
+
+IMPORTANT: The following tweets were already posted about this article. Write something COMPLETELY DIFFERENT — different insight, different framing, different angle:
+{tweets_str}"""
 
         if custom_prompt:
             user_prompt += f"\n\nAdditional instructions: {custom_prompt}"
 
-        system = custom_prompt if custom_prompt and len(custom_prompt) > 100 else TWEET_SYSTEM_PROMPT
-        if not custom_prompt or len(custom_prompt) <= 100:
-            system = TWEET_SYSTEM_PROMPT
+        system = TWEET_SYSTEM_PROMPT
 
         return await self._call_ai(system, user_prompt, model)
 

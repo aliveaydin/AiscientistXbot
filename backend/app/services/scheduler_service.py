@@ -31,21 +31,14 @@ class SchedulerService:
         return await self._get_setting("default_ai_model", settings.default_ai_model)
 
     async def generate_and_post_tweet(self):
-        """Main job: Generate a tweet from an article and post it."""
+        """Main job: Pick an article intelligently, generate a unique tweet, and post it."""
         async with async_session() as db:
             try:
                 # Scan for new articles first
                 await ArticleService.scan_and_import_articles(db)
 
-                # Get an article to tweet about
-                article = await ArticleService.get_unprocessed_article(db)
-                if not article:
-                    # Reset all articles to unprocessed if we've gone through all
-                    all_articles = await db.execute(select(Article))
-                    for a in all_articles.scalars().all():
-                        a.is_processed = False
-                    await db.commit()
-                    article = await ArticleService.get_unprocessed_article(db)
+                # Smart article selection: pick the least-tweeted article for balanced coverage
+                article = await ArticleService.get_least_tweeted_article(db)
 
                 if not article:
                     log = ActivityLog(
@@ -57,11 +50,19 @@ class SchedulerService:
                     await db.commit()
                     return
 
+                # Get previous tweets about this article to avoid repetition
+                prev_result = await db.execute(
+                    select(Tweet.content).where(Tweet.article_id == article.id)
+                )
+                previous_tweets = [row[0] for row in prev_result.fetchall()]
+
                 # Get AI model
                 model = await self._get_ai_model()
 
-                # Generate tweet
-                tweet_content = await ai_service.generate_tweet(article, model=model)
+                # Generate tweet with awareness of previous tweets
+                tweet_content = await ai_service.generate_tweet(
+                    article, model=model, previous_tweets=previous_tweets
+                )
 
                 # Ensure tweet is within character limit
                 if len(tweet_content) > 280:
@@ -82,10 +83,6 @@ class SchedulerService:
                 result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
 
                 if result["success"]:
-                    # Mark article as processed
-                    article.is_processed = True
-                    await db.commit()
-
                     log = ActivityLog(
                         action="auto_tweet_posted",
                         details=f"Auto-posted tweet from article '{article.title}': {tweet_content[:100]}...",

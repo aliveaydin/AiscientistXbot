@@ -154,9 +154,38 @@ class ArticleService:
     async def get_unprocessed_article(cls, db: AsyncSession) -> Optional[Article]:
         """Get a random unprocessed article for tweet generation."""
         result = await db.execute(
-            select(Article).where(Article.is_processed == False).limit(1)
+            select(Article).where(Article.is_processed == False)
         )
-        return result.scalar_one_or_none()
+        articles = result.scalars().all()
+        if not articles:
+            return None
+        # Pick randomly instead of always the first one
+        import random
+        return random.choice(articles)
+
+    @classmethod
+    async def get_least_tweeted_article(cls, db: AsyncSession) -> Optional[Article]:
+        """Get the article with the fewest tweets, for balanced coverage."""
+        from app.models import Tweet
+        from sqlalchemy import func, outerjoin
+
+        # Count tweets per article
+        stmt = (
+            select(Article, func.count(Tweet.id).label("tweet_count"))
+            .outerjoin(Tweet, Article.id == Tweet.article_id)
+            .group_by(Article.id)
+            .order_by(func.count(Tweet.id).asc())
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+        if not rows:
+            return None
+
+        # Get articles with the minimum tweet count and pick randomly among them
+        import random
+        min_count = rows[0][1]
+        least_tweeted = [row[0] for row in rows if row[1] == min_count]
+        return random.choice(least_tweeted)
 
     @classmethod
     async def get_article_by_id(cls, db: AsyncSession, article_id: int) -> Optional[Article]:
