@@ -1,0 +1,308 @@
+import asyncio
+from datetime import datetime
+from typing import Optional
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import select, func
+from app.database import async_session
+from app.models import Tweet, Reply, Article, ActivityLog, BotSettings
+from app.services.ai_service import ai_service
+from app.services.twitter_service import twitter_service
+from app.services.article_service import ArticleService
+from app.config import settings
+
+
+class SchedulerService:
+    def __init__(self):
+        self.scheduler = AsyncIOScheduler()
+        self.is_running = False
+        self._tweet_interval = settings.tweet_interval_minutes
+        self._auto_reply = settings.auto_reply_enabled
+
+    async def _get_setting(self, key: str, default: str) -> str:
+        async with async_session() as db:
+            result = await db.execute(
+                select(BotSettings).where(BotSettings.key == key)
+            )
+            setting = result.scalar_one_or_none()
+            return setting.value if setting else default
+
+    async def _get_ai_model(self) -> str:
+        return await self._get_setting("default_ai_model", settings.default_ai_model)
+
+    async def generate_and_post_tweet(self):
+        """Main job: Generate a tweet from an article and post it."""
+        async with async_session() as db:
+            try:
+                # Scan for new articles first
+                await ArticleService.scan_and_import_articles(db)
+
+                # Get an article to tweet about
+                article = await ArticleService.get_unprocessed_article(db)
+                if not article:
+                    # Reset all articles to unprocessed if we've gone through all
+                    all_articles = await db.execute(select(Article))
+                    for a in all_articles.scalars().all():
+                        a.is_processed = False
+                    await db.commit()
+                    article = await ArticleService.get_unprocessed_article(db)
+
+                if not article:
+                    log = ActivityLog(
+                        action="tweet_skipped",
+                        details="No articles available for tweet generation",
+                        status="warning",
+                    )
+                    db.add(log)
+                    await db.commit()
+                    return
+
+                # Get AI model
+                model = await self._get_ai_model()
+
+                # Generate tweet
+                tweet_content = await ai_service.generate_tweet(article, model=model)
+
+                # Ensure tweet is within character limit
+                if len(tweet_content) > 280:
+                    tweet_content = tweet_content[:277] + "..."
+
+                # Save to DB
+                tweet = Tweet(
+                    content=tweet_content,
+                    article_id=article.id,
+                    ai_model_used=model,
+                    status="draft",
+                )
+                db.add(tweet)
+                await db.commit()
+                await db.refresh(tweet)
+
+                # Post to Twitter
+                result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
+
+                if result["success"]:
+                    # Mark article as processed
+                    article.is_processed = True
+                    await db.commit()
+
+                    log = ActivityLog(
+                        action="auto_tweet_posted",
+                        details=f"Auto-posted tweet from article '{article.title}': {tweet_content[:100]}...",
+                        status="success",
+                    )
+                else:
+                    log = ActivityLog(
+                        action="auto_tweet_failed",
+                        details=f"Failed to auto-post: {result.get('error', 'Unknown error')}",
+                        status="error",
+                    )
+                db.add(log)
+                await db.commit()
+
+            except Exception as e:
+                log = ActivityLog(
+                    action="auto_tweet_error",
+                    details=f"Error in auto tweet job: {str(e)}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
+    async def check_and_reply_mentions(self):
+        """Check for new mentions and auto-reply."""
+        auto_reply = await self._get_setting("auto_reply_enabled", str(self._auto_reply))
+        if auto_reply.lower() != "true":
+            return
+
+        async with async_session() as db:
+            try:
+                # Get the last processed mention ID
+                last_mention_id = await self._get_setting("last_mention_id", None)
+
+                mentions = await twitter_service.get_mentions(since_id=last_mention_id)
+
+                if not mentions:
+                    return
+
+                model = await self._get_ai_model()
+
+                for mention in mentions:
+                    # Check if we already replied to this
+                    existing = await db.execute(
+                        select(Reply).where(Reply.incoming_reply_id == mention["id"])
+                    )
+                    if existing.scalar_one_or_none():
+                        continue
+
+                    # Find the parent tweet in our DB
+                    parent_tweet = None
+                    article_content = None
+                    if mention.get("parent_tweet_id"):
+                        result = await db.execute(
+                            select(Tweet).where(Tweet.tweet_id == mention["parent_tweet_id"])
+                        )
+                        parent_tweet = result.scalar_one_or_none()
+
+                        if parent_tweet and parent_tweet.article_id:
+                            article = await db.execute(
+                                select(Article).where(Article.id == parent_tweet.article_id)
+                            )
+                            article_obj = article.scalar_one_or_none()
+                            if article_obj:
+                                article_content = article_obj.content
+
+                    if not parent_tweet:
+                        continue
+
+                    # Generate reply
+                    reply_text = await ai_service.generate_reply(
+                        original_tweet=parent_tweet.content,
+                        incoming_reply=mention["text"],
+                        reply_user=mention["author_username"],
+                        article_content=article_content,
+                        model=model,
+                    )
+
+                    if len(reply_text) > 280:
+                        reply_text = reply_text[:277] + "..."
+
+                    # Save reply to DB
+                    reply = Reply(
+                        tweet_id=parent_tweet.id,
+                        incoming_text=mention["text"],
+                        incoming_user=mention["author_username"],
+                        incoming_reply_id=mention["id"],
+                        response_text=reply_text,
+                        ai_model_used=model,
+                        status="pending",
+                    )
+                    db.add(reply)
+                    await db.commit()
+                    await db.refresh(reply)
+
+                    # Post reply
+                    result = await twitter_service.post_reply(
+                        reply_text, mention["id"], db, reply.id
+                    )
+
+                    if result["success"]:
+                        log = ActivityLog(
+                            action="auto_reply_posted",
+                            details=f"Replied to @{mention['author_username']}: {reply_text[:100]}...",
+                            status="success",
+                        )
+                    else:
+                        log = ActivityLog(
+                            action="auto_reply_failed",
+                            details=f"Failed to reply to @{mention['author_username']}: {result.get('error')}",
+                            status="error",
+                        )
+                    db.add(log)
+
+                # Update last mention ID
+                if mentions:
+                    latest_id = mentions[0]["id"]
+                    result = await db.execute(
+                        select(BotSettings).where(BotSettings.key == "last_mention_id")
+                    )
+                    setting = result.scalar_one_or_none()
+                    if setting:
+                        setting.value = latest_id
+                    else:
+                        db.add(BotSettings(key="last_mention_id", value=latest_id))
+
+                await db.commit()
+
+            except Exception as e:
+                log = ActivityLog(
+                    action="auto_reply_error",
+                    details=f"Error checking mentions: {str(e)}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
+    async def update_metrics_job(self):
+        """Periodically update tweet engagement metrics."""
+        async with async_session() as db:
+            try:
+                await twitter_service.update_tweet_metrics(db)
+            except Exception as e:
+                log = ActivityLog(
+                    action="metrics_update_error",
+                    details=f"Error updating metrics: {str(e)}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
+    def start(self):
+        """Start the scheduler with all jobs."""
+        if self.is_running:
+            return
+
+        # Tweet posting job
+        self.scheduler.add_job(
+            self.generate_and_post_tweet,
+            IntervalTrigger(minutes=self._tweet_interval),
+            id="tweet_job",
+            name="Auto Tweet Poster",
+            replace_existing=True,
+        )
+
+        # Mention checking job (every 5 minutes)
+        self.scheduler.add_job(
+            self.check_and_reply_mentions,
+            IntervalTrigger(minutes=5),
+            id="mention_job",
+            name="Mention Checker",
+            replace_existing=True,
+        )
+
+        # Metrics update job (every 30 minutes)
+        self.scheduler.add_job(
+            self.update_metrics_job,
+            IntervalTrigger(minutes=30),
+            id="metrics_job",
+            name="Metrics Updater",
+            replace_existing=True,
+        )
+
+        self.scheduler.start()
+        self.is_running = True
+
+    def stop(self):
+        """Stop the scheduler."""
+        if self.is_running:
+            self.scheduler.shutdown(wait=False)
+            self.is_running = False
+
+    def update_tweet_interval(self, minutes: int):
+        """Update the tweet posting interval."""
+        self._tweet_interval = minutes
+        if self.is_running:
+            self.scheduler.reschedule_job(
+                "tweet_job",
+                trigger=IntervalTrigger(minutes=minutes),
+            )
+
+    def get_status(self) -> dict:
+        """Get scheduler status."""
+        jobs = []
+        if self.is_running:
+            for job in self.scheduler.get_jobs():
+                jobs.append({
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": str(job.next_run_time) if job.next_run_time else None,
+                })
+
+        return {
+            "is_running": self.is_running,
+            "tweet_interval_minutes": self._tweet_interval,
+            "jobs": jobs,
+        }
+
+
+scheduler_service = SchedulerService()
