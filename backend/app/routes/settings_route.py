@@ -125,6 +125,77 @@ async def get_available_models():
     }
 
 
+@router.get("/debug/twitter")
+async def debug_twitter():
+    """Debug Twitter API - check credentials and connectivity."""
+    import os
+    import requests as req
+    from requests_oauthlib import OAuth1
+
+    debug_info = {}
+
+    # 1. Check env vars are loaded
+    debug_info["env_vars"] = {
+        "api_key_loaded": bool(settings.twitter_api_key),
+        "api_key_preview": settings.twitter_api_key[:8] + "..." if settings.twitter_api_key else "EMPTY",
+        "api_secret_loaded": bool(settings.twitter_api_secret),
+        "access_token_loaded": bool(settings.twitter_access_token),
+        "access_token_preview": settings.twitter_access_token[:15] + "..." if settings.twitter_access_token else "EMPTY",
+        "access_token_secret_loaded": bool(settings.twitter_access_token_secret),
+        "bearer_token_loaded": bool(settings.twitter_bearer_token),
+    }
+
+    # 2. Test basic connectivity to Twitter
+    try:
+        r = req.get("https://api.twitter.com/2/tweets/search/recent?query=hello", timeout=10)
+        debug_info["twitter_reachable"] = True
+        debug_info["basic_status"] = r.status_code
+    except Exception as e:
+        debug_info["twitter_reachable"] = False
+        debug_info["connectivity_error"] = str(e)
+
+    # 3. Test OAuth1 with a simple GET (verify credentials)
+    try:
+        auth = OAuth1(
+            settings.twitter_api_key,
+            settings.twitter_api_secret,
+            settings.twitter_access_token,
+            settings.twitter_access_token_secret,
+        )
+        r = req.get(
+            "https://api.twitter.com/2/users/me",
+            auth=auth,
+            timeout=10,
+        )
+        debug_info["oauth_get_status"] = r.status_code
+        debug_info["oauth_get_response"] = r.json() if r.status_code == 200 else r.text[:500]
+    except Exception as e:
+        debug_info["oauth_get_error"] = str(e)
+
+    # 4. Test POST tweet (dry run - just check auth, don't actually post)
+    try:
+        auth = OAuth1(
+            settings.twitter_api_key,
+            settings.twitter_api_secret,
+            settings.twitter_access_token,
+            settings.twitter_access_token_secret,
+        )
+        # Post a minimal test
+        r = req.post(
+            "https://api.twitter.com/2/tweets",
+            json={"text": "🔬 Test tweet from AI Scientist Bot - please ignore"},
+            auth=auth,
+            headers={"Content-Type": "application/json"},
+            timeout=30,
+        )
+        debug_info["post_status"] = r.status_code
+        debug_info["post_response"] = r.text[:500]
+    except Exception as e:
+        debug_info["post_error"] = str(e)
+
+    return debug_info
+
+
 @router.get("/replies")
 async def get_replies(
     limit: int = 50,
