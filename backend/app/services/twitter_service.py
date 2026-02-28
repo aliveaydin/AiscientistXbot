@@ -43,23 +43,45 @@ class TwitterService:
         return self._oauth
 
     def _post_tweet_api(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet using direct API call with OAuth1."""
+        """Post tweet using direct API call with OAuth1, with retry for transient errors."""
+        import time
+
         payload = {"text": text}
         if reply_to_id:
             payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
-        resp = requests.post(
-            "https://api.twitter.com/2/tweets",
-            json=payload,
-            auth=self.oauth,
-            headers={"Content-Type": "application/json"},
-        )
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    "https://api.twitter.com/2/tweets",
+                    json=payload,
+                    auth=self.oauth,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30,
+                )
 
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            return {"success": True, "tweet_id": data["data"]["id"]}
-        else:
-            return {"success": False, "error": f"{resp.status_code}: {resp.text}"}
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    return {"success": True, "tweet_id": data["data"]["id"]}
+                elif resp.status_code in (500, 502, 503, 504) and attempt < max_retries - 1:
+                    # Transient server error — retry after delay
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return {"success": False, "error": f"{resp.status_code}: {resp.text}"}
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return {"success": False, "error": "Request timed out after 3 retries"}
+            except requests.exceptions.ConnectionError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                return {"success": False, "error": f"Connection error: {str(e)}"}
+
+        return {"success": False, "error": "Max retries exceeded"}
 
     async def post_tweet(self, content: str, db: AsyncSession, tweet_db_id: Optional[int] = None) -> dict:
         """Post a tweet to Twitter."""
