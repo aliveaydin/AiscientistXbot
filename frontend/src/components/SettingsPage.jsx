@@ -156,21 +156,20 @@ export default function SettingsPage() {
           <div>
             <label className="block text-sm text-gray-400 mb-1.5">Default AI Model</label>
             <select
-              value={settings?.default_ai_model || 'gpt-4'}
+              value={settings?.default_ai_model || 'claude-sonnet-4-20250514'}
               onChange={(e) => setSettingsState({ ...settings, default_ai_model: e.target.value })}
               className="select-field"
             >
-              <optgroup label="OpenAI">
-                <option value="gpt-4">GPT-4</option>
-                <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                <option value="gpt-4o">GPT-4o</option>
-                <option value="gpt-4o-mini">GPT-4o Mini</option>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-              </optgroup>
-              <optgroup label="Anthropic">
-                <option value="claude-sonnet-4-20250514">Claude 3.5 Sonnet</option>
-                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+              <optgroup label="Anthropic (Recommended)">
+                <option value="claude-sonnet-4-20250514">Claude Sonnet 4 ⭐</option>
+                <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fast)</option>
                 <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+              </optgroup>
+              <optgroup label="OpenAI">
+                <option value="gpt-4o">GPT-4o</option>
+                <option value="gpt-4o-mini">GPT-4o Mini (Cheap)</option>
+                <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                <option value="gpt-4">GPT-4</option>
               </optgroup>
             </select>
           </div>

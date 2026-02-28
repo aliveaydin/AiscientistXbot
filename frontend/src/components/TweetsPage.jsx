@@ -95,7 +95,7 @@ export default function TweetsPage() {
   const [generating, setGenerating] = useState(false);
   const [filter, setFilter] = useState('');
   const [selectedArticle, setSelectedArticle] = useState('');
-  const [selectedModel, setSelectedModel] = useState('gpt-4');
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-20250514');
 
   useEffect(() => {
     loadData();
@@ -199,17 +199,16 @@ export default function TweetsPage() {
             onChange={(e) => setSelectedModel(e.target.value)}
             className="select-field"
           >
-            <optgroup label="OpenAI">
-              <option value="gpt-4">GPT-4</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo</option>
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4o-mini">GPT-4o Mini</option>
-              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-            </optgroup>
-            <optgroup label="Anthropic">
-              <option value="claude-sonnet-4-20250514">Claude 3.5 Sonnet</option>
-              <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
+            <optgroup label="Anthropic (Recommended)">
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4 ⭐</option>
+              <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fast)</option>
               <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+            </optgroup>
+            <optgroup label="OpenAI">
+              <option value="gpt-4o">GPT-4o</option>
+              <option value="gpt-4o-mini">GPT-4o Mini (Cheap)</option>
+              <option value="gpt-4-turbo">GPT-4 Turbo</option>
+              <option value="gpt-4">GPT-4</option>
             </optgroup>
           </select>
 

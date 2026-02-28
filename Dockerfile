@@ -26,12 +26,14 @@ COPY backend/ ./
 # Copy built frontend
 COPY --from=frontend-build /app/frontend/dist ./frontend_dist
 
-# Create articles directory
-RUN mkdir -p ./articles
+# Create persistent data directory (mount Railway Volume here)
+RUN mkdir -p /app/data/articles
 
 # Environment
 ENV PYTHONUNBUFFERED=1
-ENV ARTICLES_DIR=./articles
+ENV DATA_DIR=/app/data
+ENV ARTICLES_DIR=/app/data/articles
+ENV DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db
 ENV FRONTEND_DIST_DIR=./frontend_dist
 
 EXPOSE 8000

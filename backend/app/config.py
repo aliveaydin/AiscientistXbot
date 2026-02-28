@@ -24,10 +24,13 @@ class Settings(BaseSettings):
     # Bot Settings
     tweet_interval_minutes: int = int(os.getenv("TWEET_INTERVAL_MINUTES", "120"))
     auto_reply_enabled: bool = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
-    articles_dir: str = os.getenv("ARTICLES_DIR", "./articles")
 
-    # Database
-    database_url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
+    # Persistent storage — use /app/data on Railway (Volume mount), fallback to local
+    data_dir: str = os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else ".")
+    articles_dir: str = os.getenv("ARTICLES_DIR", os.path.join(os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else "."), "articles"))
+
+    # Database — store in data_dir for persistence
+    database_url: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{os.path.join(os.getenv('DATA_DIR', './data' if os.getenv('RAILWAY_ENVIRONMENT') else '.'), 'bot.db')}")
 
     class Config:
         env_file = ".env"
