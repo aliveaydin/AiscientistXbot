@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: aiscientist-bot
+    restart: always
+    ports:
+      - "80:8000"
+    volumes:
+      - bot-data:/app/data
+    env_file:
+      - .env.production
+    environment:
+      - DATA_DIR=/app/data
+      - ARTICLES_DIR=/app/data/articles
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db
+      - FRONTEND_DIST_DIR=./frontend_dist
+
+volumes:
+  bot-data:
