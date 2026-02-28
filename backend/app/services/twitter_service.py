@@ -42,46 +42,108 @@ class TwitterService:
             )
         return self._oauth
 
-    def _post_tweet_api(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet using direct API call with OAuth1, with retry for transient errors."""
-        import time
+    def _get_headers(self) -> dict:
+        """Standard headers to avoid cloud IP blocks."""
+        return {
+            "Content-Type": "application/json",
+            "User-Agent": "AiScientistBot/1.0",
+            "Accept": "application/json",
+        }
 
+    def _post_tweet_v2(self, text: str, reply_to_id: Optional[str] = None) -> dict:
+        """Post tweet using Twitter API v2."""
         payload = {"text": text}
         if reply_to_id:
             payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                resp = requests.post(
-                    "https://api.twitter.com/2/tweets",
-                    json=payload,
-                    auth=self.oauth,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30,
-                )
+        resp = requests.post(
+            "https://api.twitter.com/2/tweets",
+            json=payload,
+            auth=self.oauth,
+            headers=self._get_headers(),
+            timeout=30,
+        )
 
-                if resp.status_code in (200, 201):
-                    data = resp.json()
-                    return {"success": True, "tweet_id": data["data"]["id"]}
-                elif resp.status_code in (500, 502, 503, 504) and attempt < max_retries - 1:
-                    # Transient server error — retry after delay
-                    time.sleep(2 ** attempt)
-                    continue
-                else:
-                    return {"success": False, "error": f"{resp.status_code}: {resp.text}"}
-            except requests.exceptions.Timeout:
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                return {"success": False, "error": "Request timed out after 3 retries"}
-            except requests.exceptions.ConnectionError as e:
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
-                    continue
-                return {"success": False, "error": f"Connection error: {str(e)}"}
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            return {"success": True, "tweet_id": data["data"]["id"]}
+        else:
+            return {"success": False, "error": f"v2: {resp.status_code}: {resp.text}"}
 
-        return {"success": False, "error": "Max retries exceeded"}
+    def _post_tweet_v1(self, text: str, reply_to_id: Optional[str] = None) -> dict:
+        """Post tweet using Twitter API v1.1 (fallback)."""
+        params = {"status": text}
+        if reply_to_id:
+            params["in_reply_to_status_id"] = reply_to_id
+            params["auto_populate_reply_metadata"] = "true"
+
+        resp = requests.post(
+            "https://api.twitter.com/1.1/statuses/update.json",
+            data=params,
+            auth=self.oauth,
+            headers={
+                "User-Agent": "AiScientistBot/1.0",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+
+        if resp.status_code == 200:
+            data = resp.json()
+            return {"success": True, "tweet_id": str(data["id_str"])}
+        else:
+            return {"success": False, "error": f"v1.1: {resp.status_code}: {resp.text}"}
+
+    def _post_tweet_bearer(self, text: str, reply_to_id: Optional[str] = None) -> dict:
+        """Post tweet using OAuth2 Bearer Token + OAuth1 combo."""
+        payload = {"text": text}
+        if reply_to_id:
+            payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
+
+        # Use OAuth1 but with explicit session to handle redirects
+        session = requests.Session()
+        session.auth = self.oauth
+        session.headers.update(self._get_headers())
+
+        resp = session.post(
+            "https://api.x.com/2/tweets",  # Try x.com domain
+            json=payload,
+            timeout=30,
+            allow_redirects=True,
+        )
+
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            return {"success": True, "tweet_id": data["data"]["id"]}
+        else:
+            return {"success": False, "error": f"x.com: {resp.status_code}: {resp.text}"}
+
+    def _post_tweet_api(self, text: str, reply_to_id: Optional[str] = None) -> dict:
+        """Post tweet with automatic fallback between API versions."""
+        import time
+
+        # Try v2 API (api.twitter.com)
+        result = self._post_tweet_v2(text, reply_to_id)
+        if result["success"]:
+            return result
+
+        # If 503 on v2, try x.com domain
+        if "503" in result.get("error", ""):
+            print(f"[TwitterBot] v2 failed with 503, trying x.com domain...")
+            time.sleep(1)
+            result = self._post_tweet_bearer(text, reply_to_id)
+            if result["success"]:
+                return result
+
+        # If still failing, try v1.1 API
+        if not result["success"]:
+            print(f"[TwitterBot] x.com failed, trying v1.1 API...")
+            time.sleep(1)
+            result_v1 = self._post_tweet_v1(text, reply_to_id)
+            if result_v1["success"]:
+                return result_v1
+            # Return the most informative error
+            return {"success": False, "error": f"{result['error']} | {result_v1['error']}"}
 
     async def post_tweet(self, content: str, db: AsyncSession, tweet_db_id: Optional[int] = None) -> dict:
         """Post a tweet to Twitter."""

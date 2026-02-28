@@ -172,7 +172,7 @@ async def debug_twitter():
     except Exception as e:
         debug_info["oauth_get_error"] = str(e)
 
-    # 4. Test POST tweet (dry run - just check auth, don't actually post)
+    # 4. Test via x.com domain (some cloud IPs blocked on api.twitter.com)
     try:
         auth = OAuth1(
             settings.twitter_api_key,
@@ -180,18 +180,35 @@ async def debug_twitter():
             settings.twitter_access_token,
             settings.twitter_access_token_secret,
         )
-        # Post a minimal test
-        r = req.post(
-            "https://api.twitter.com/2/tweets",
-            json={"text": "🔬 Test tweet from AI Scientist Bot - please ignore"},
+        r = req.get(
+            "https://api.x.com/2/users/me",
             auth=auth,
-            headers={"Content-Type": "application/json"},
-            timeout=30,
+            headers={"User-Agent": "AiScientistBot/1.0", "Accept": "application/json"},
+            timeout=10,
         )
-        debug_info["post_status"] = r.status_code
-        debug_info["post_response"] = r.text[:500]
+        debug_info["xcom_get_status"] = r.status_code
+        debug_info["xcom_get_response"] = r.text[:500]
     except Exception as e:
-        debug_info["post_error"] = str(e)
+        debug_info["xcom_get_error"] = str(e)
+
+    # 5. Test v1.1 API (different endpoint, sometimes works when v2 doesn't)
+    try:
+        auth = OAuth1(
+            settings.twitter_api_key,
+            settings.twitter_api_secret,
+            settings.twitter_access_token,
+            settings.twitter_access_token_secret,
+        )
+        r = req.get(
+            "https://api.twitter.com/1.1/account/verify_credentials.json",
+            auth=auth,
+            headers={"User-Agent": "AiScientistBot/1.0"},
+            timeout=10,
+        )
+        debug_info["v1_verify_status"] = r.status_code
+        debug_info["v1_verify_response"] = r.text[:500]
+    except Exception as e:
+        debug_info["v1_verify_error"] = str(e)
 
     return debug_info
 
