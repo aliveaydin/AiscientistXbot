@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # AI Models
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "gpt-4")
+    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "claude-sonnet-4-20250514")
 
     # Bot Settings
     tweet_interval_minutes: int = int(os.getenv("TWEET_INTERVAL_MINUTES", "120"))
