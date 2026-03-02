@@ -68,39 +68,104 @@ class SchedulerService:
                 if len(tweet_content) > 280:
                     tweet_content = tweet_content[:277] + "..."
 
-                # Save to DB
+                # Save to DB as "queued" — retry job will attempt to post
                 tweet = Tweet(
                     content=tweet_content,
                     article_id=article.id,
                     ai_model_used=model,
-                    status="draft",
+                    status="queued",
                 )
                 db.add(tweet)
+
+                log = ActivityLog(
+                    action="tweet_queued",
+                    details=f"Queued tweet from article '{article.title}': {tweet_content[:100]}...",
+                    status="success",
+                )
+                db.add(log)
                 await db.commit()
                 await db.refresh(tweet)
 
-                # Post to Twitter
-                result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
-
-                if result["success"]:
-                    log = ActivityLog(
+                # Immediately try to post
+                post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
+                if post_result["success"]:
+                    log2 = ActivityLog(
                         action="auto_tweet_posted",
-                        details=f"Auto-posted tweet from article '{article.title}': {tweet_content[:100]}...",
+                        details=f"Posted tweet: {tweet_content[:100]}...",
                         status="success",
                     )
                 else:
-                    log = ActivityLog(
-                        action="auto_tweet_failed",
-                        details=f"Failed to auto-post: {result.get('error', 'Unknown error')}",
-                        status="error",
+                    log2 = ActivityLog(
+                        action="tweet_retry_pending",
+                        details=f"Tweet queued for retry (API returned: {post_result.get('error', '')[:150]})",
+                        status="warning",
                     )
-                db.add(log)
+                    # Mark as queued (post_tweet may have set it to failed)
+                    await db.refresh(tweet)
+                    if tweet.status == "failed":
+                        tweet.status = "queued"
+                db.add(log2)
                 await db.commit()
 
             except Exception as e:
                 log = ActivityLog(
                     action="auto_tweet_error",
                     details=f"Error in auto tweet job: {str(e)}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
+    async def retry_queued_tweets(self):
+        """Retry posting queued tweets that failed due to 503 or other transient errors."""
+        async with async_session() as db:
+            try:
+                result = await db.execute(
+                    select(Tweet)
+                    .where(Tweet.status == "queued")
+                    .order_by(Tweet.created_at.asc())
+                    .limit(5)
+                )
+                queued_tweets = result.scalars().all()
+
+                if not queued_tweets:
+                    return
+
+                for tweet in queued_tweets:
+                    # Check retry count (stored in a simple way)
+                    retry_count = tweet.retry_count if hasattr(tweet, 'retry_count') and tweet.retry_count else 0
+
+                    if retry_count >= 50:
+                        tweet.status = "failed"
+                        log = ActivityLog(
+                            action="tweet_retry_exhausted",
+                            details=f"Tweet #{tweet.id} failed after {retry_count} retries",
+                            status="error",
+                        )
+                        db.add(log)
+                        continue
+
+                    post_result = await twitter_service.post_tweet(tweet.content, db, tweet.id)
+
+                    if post_result["success"]:
+                        log = ActivityLog(
+                            action="tweet_retry_success",
+                            details=f"Tweet #{tweet.id} posted on retry: {tweet.content[:80]}...",
+                            status="success",
+                        )
+                        db.add(log)
+                    else:
+                        # Keep as queued, increment retry
+                        await db.refresh(tweet)
+                        if tweet.status == "failed":
+                            tweet.status = "queued"
+
+                await db.commit()
+
+            except Exception as e:
+                log = ActivityLog(
+                    action="retry_job_error",
+                    details=f"Error in retry job: {str(e)}",
                     status="error",
                 )
                 db.add(log)
@@ -245,6 +310,15 @@ class SchedulerService:
             IntervalTrigger(minutes=self._tweet_interval),
             id="tweet_job",
             name="Auto Tweet Poster",
+            replace_existing=True,
+        )
+
+        # Retry queued tweets (every 5 minutes)
+        self.scheduler.add_job(
+            self.retry_queued_tweets,
+            IntervalTrigger(minutes=5),
+            id="retry_job",
+            name="Tweet Retry Queue",
             replace_existing=True,
         )
 

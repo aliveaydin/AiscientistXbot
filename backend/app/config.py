@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     tweet_interval_minutes: int = int(os.getenv("TWEET_INTERVAL_MINUTES", "120"))
     auto_reply_enabled: bool = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
 
+    # Cloudflare Worker Proxy (for posting tweets from cloud IPs)
+    cf_worker_url: str = os.getenv("CF_WORKER_URL", "")
+    cf_worker_secret: str = os.getenv("CF_WORKER_SECRET", "aiscientist-bot-2024")
+
     # Persistent storage — use /app/data on Railway (Volume mount), fallback to local
     data_dir: str = os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else ".")
     articles_dir: str = os.getenv("ARTICLES_DIR", os.path.join(os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else "."), "articles"))

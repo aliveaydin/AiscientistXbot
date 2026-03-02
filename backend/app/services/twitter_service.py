@@ -50,88 +50,51 @@ class TwitterService:
             "Accept": "application/json",
         }
 
-    def _post_tweet_v2(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet using Twitter API v2."""
-        payload = {"text": text}
-        if reply_to_id:
-            payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
-
-        resp = requests.post(
-            "https://api.twitter.com/2/tweets",
-            json=payload,
-            auth=self.oauth,
-            headers=self._get_headers(),
-            timeout=30,
-        )
-
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            return {"success": True, "tweet_id": data["data"]["id"]}
-        else:
-            return {"success": False, "error": f"v2: {resp.status_code}: {resp.text}"}
-
-    def _post_tweet_v1(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet using Twitter API v1.1 (fallback)."""
-        params = {"status": text}
-        if reply_to_id:
-            params["in_reply_to_status_id"] = reply_to_id
-            params["auto_populate_reply_metadata"] = "true"
-
-        resp = requests.post(
-            "https://api.twitter.com/1.1/statuses/update.json",
-            data=params,
-            auth=self.oauth,
-            headers={
-                "User-Agent": "AiScientistBot/1.0",
-                "Accept": "application/json",
-            },
-            timeout=30,
-        )
-
-        if resp.status_code == 200:
-            data = resp.json()
-            return {"success": True, "tweet_id": str(data["id_str"])}
-        else:
-            return {"success": False, "error": f"v1.1: {resp.status_code}: {resp.text}"}
-
-    def _post_tweet_bearer(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet using OAuth2 Bearer Token + OAuth1 combo."""
-        payload = {"text": text}
-        if reply_to_id:
-            payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
-
-        # Use OAuth1 but with explicit session to handle redirects
-        session = requests.Session()
-        session.auth = self.oauth
-        session.headers.update(self._get_headers())
-
-        resp = session.post(
-            "https://api.x.com/2/tweets",  # Try x.com domain
-            json=payload,
-            timeout=30,
-            allow_redirects=True,
-        )
-
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            return {"success": True, "tweet_id": data["data"]["id"]}
-        else:
-            return {"success": False, "error": f"x.com: {resp.status_code}: {resp.text}"}
-
     def _post_tweet_api(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet — use v1.1 first (works on cloud servers), fallback to v2."""
-        # Try v1.1 first (works from cloud IPs where v2 returns 503)
-        result = self._post_tweet_v1(text, reply_to_id)
-        if result["success"]:
-            return result
+        """Post tweet via Twitter v2 API with multiple endpoint fallbacks."""
+        import time
 
-        # Fallback to v2 if v1.1 fails with non-503 error
-        if "453" not in result.get("error", ""):
-            result_v2 = self._post_tweet_v2(text, reply_to_id)
-            if result_v2["success"]:
-                return result_v2
+        payload = {"text": text}
+        if reply_to_id:
+            payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
-        return result
+        endpoints = [
+            "https://api.twitter.com/2/tweets",
+            "https://api.x.com/2/tweets",
+        ]
+
+        last_error = ""
+        for endpoint in endpoints:
+            # OAuth must be re-generated per endpoint (signature includes URL)
+            for attempt in range(2):
+                try:
+                    resp = requests.post(
+                        endpoint,
+                        json=payload,
+                        auth=self.oauth,
+                        headers=self._get_headers(),
+                        timeout=30,
+                    )
+
+                    if resp.status_code in (200, 201):
+                        data = resp.json()
+                        return {"success": True, "tweet_id": data["data"]["id"]}
+                    elif resp.status_code == 429:
+                        time.sleep(10)
+                        continue
+                    elif resp.status_code == 503:
+                        last_error = f"{endpoint}: 503 Service Unavailable"
+                        print(f"[TwitterBot] {last_error} (attempt {attempt+1})")
+                        time.sleep(3)
+                        continue
+                    else:
+                        last_error = f"{endpoint}: {resp.status_code}: {resp.text[:200]}"
+                        break  # Non-retryable error, try next endpoint
+                except requests.exceptions.RequestException as e:
+                    last_error = f"{endpoint}: {str(e)}"
+                    time.sleep(2)
+
+        return {"success": False, "error": last_error}
 
     async def post_tweet(self, content: str, db: AsyncSession, tweet_db_id: Optional[int] = None) -> dict:
         """Post a tweet to Twitter."""

@@ -156,3 +156,81 @@ async def delete_tweet(tweet_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(tweet)
     await db.commit()
     return {"message": "Tweet deleted"}
+
+
+# ─── Local Poster Agent Endpoints ────────────────────────────────────
+
+@router.get("/queue/pending")
+async def get_pending_tweets(db: AsyncSession = Depends(get_db)):
+    """Get tweets queued for posting (used by local poster agent)."""
+    result = await db.execute(
+        select(Tweet)
+        .where(Tweet.status.in_(["queued", "draft"]))
+        .order_by(Tweet.created_at.asc())
+    )
+    tweets = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "content": t.content,
+            "status": t.status,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        }
+        for t in tweets
+    ]
+
+
+@router.post("/{tweet_id}/confirm-posted")
+async def confirm_tweet_posted(
+    tweet_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a tweet as posted (called by local poster agent after successful Twitter post)."""
+    result = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
+    tweet = result.scalar_one_or_none()
+
+    if not tweet:
+        raise HTTPException(status_code=404, detail="Tweet not found")
+
+    twitter_tweet_id = data.get("tweet_id", "")
+    tweet.tweet_id = twitter_tweet_id
+    tweet.status = "posted"
+    tweet.posted_at = datetime.utcnow()
+
+    log = ActivityLog(
+        action="tweet_posted",
+        details=f"Posted via local agent: {tweet.content[:100]}... (ID: {twitter_tweet_id})",
+        status="success",
+    )
+    db.add(log)
+    await db.commit()
+
+    return {"success": True, "message": f"Tweet {tweet_id} marked as posted"}
+
+
+@router.post("/{tweet_id}/mark-failed")
+async def mark_tweet_failed(
+    tweet_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a tweet as failed (called by local poster agent on failure)."""
+    result = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
+    tweet = result.scalar_one_or_none()
+
+    if not tweet:
+        raise HTTPException(status_code=404, detail="Tweet not found")
+
+    tweet.status = "failed"
+    error = data.get("error", "Unknown error")
+
+    log = ActivityLog(
+        action="tweet_failed",
+        details=f"Local agent failed: {error}",
+        status="error",
+    )
+    db.add(log)
+    await db.commit()
+
+    return {"success": True, "message": f"Tweet {tweet_id} marked as failed"}
