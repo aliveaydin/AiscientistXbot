@@ -2,9 +2,10 @@ FROM node:20-slim AS frontend-build
 
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
-COPY frontend/ ./
-RUN npm run build
+RUN npm install --legacy-peer-deps
+COPY frontend/src ./src
+COPY frontend/index.html frontend/vite.config.js frontend/tailwind.config.js frontend/postcss.config.js ./
+RUN npx vite build
 
 # --- Python Backend ---
 FROM python:3.12-slim

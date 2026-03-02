@@ -119,31 +119,19 @@ class TwitterService:
             return {"success": False, "error": f"x.com: {resp.status_code}: {resp.text}"}
 
     def _post_tweet_api(self, text: str, reply_to_id: Optional[str] = None) -> dict:
-        """Post tweet with automatic fallback between API versions."""
-        import time
-
-        # Try v2 API (api.twitter.com)
-        result = self._post_tweet_v2(text, reply_to_id)
+        """Post tweet — use v1.1 first (works on cloud servers), fallback to v2."""
+        # Try v1.1 first (works from cloud IPs where v2 returns 503)
+        result = self._post_tweet_v1(text, reply_to_id)
         if result["success"]:
             return result
 
-        # If 503 on v2, try x.com domain
-        if "503" in result.get("error", ""):
-            print(f"[TwitterBot] v2 failed with 503, trying x.com domain...")
-            time.sleep(1)
-            result = self._post_tweet_bearer(text, reply_to_id)
-            if result["success"]:
-                return result
+        # Fallback to v2 if v1.1 fails with non-503 error
+        if "453" not in result.get("error", ""):
+            result_v2 = self._post_tweet_v2(text, reply_to_id)
+            if result_v2["success"]:
+                return result_v2
 
-        # If still failing, try v1.1 API
-        if not result["success"]:
-            print(f"[TwitterBot] x.com failed, trying v1.1 API...")
-            time.sleep(1)
-            result_v1 = self._post_tweet_v1(text, reply_to_id)
-            if result_v1["success"]:
-                return result_v1
-            # Return the most informative error
-            return {"success": False, "error": f"{result['error']} | {result_v1['error']}"}
+        return result
 
     async def post_tweet(self, content: str, db: AsyncSession, tweet_db_id: Optional[int] = None) -> dict:
         """Post a tweet to Twitter."""
