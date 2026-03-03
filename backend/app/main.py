@@ -4,6 +4,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import os
+import asyncio
+import logging
 
 from app.database import init_db
 from app.routes import dashboard, tweets, articles, settings_route
@@ -11,26 +13,36 @@ from app.services.scheduler_service import scheduler_service
 from app.services.article_service import ArticleService
 from app.database import async_session
 
+logger = logging.getLogger("app")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
-    # Startup
     await init_db()
 
-    # Scan for articles on startup
     async with async_session() as db:
         await ArticleService.scan_and_import_articles(db)
 
-    print("🤖 Twitter Bot AI Agent started!")
-    print("📊 Dashboard: http://localhost:8000")
-    print("📚 API Docs: http://localhost:8000/docs")
+    logger.info("Twitter Bot AI Agent started!")
+    logger.info("Dashboard: http://localhost:8000")
+    logger.info("API Docs: http://localhost:8000/docs")
+
+    # Auto-start the scheduler so it works after every container restart
+    scheduler_service.start()
+    logger.info("Scheduler auto-started on boot")
+
+    # Run initial jobs in background after a short delay
+    async def _delayed_initial():
+        await asyncio.sleep(10)
+        await scheduler_service.run_initial_jobs()
+
+    asyncio.create_task(_delayed_initial())
 
     yield
 
-    # Shutdown
     scheduler_service.stop()
-    print("👋 Twitter Bot AI Agent stopped!")
+    logger.info("Twitter Bot AI Agent stopped!")
 
 
 app = FastAPI(

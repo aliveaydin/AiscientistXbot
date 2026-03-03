@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime
 from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -10,6 +11,9 @@ from app.services.ai_service import ai_service
 from app.services.twitter_service import twitter_service
 from app.services.article_service import ArticleService
 from app.config import settings
+
+logger = logging.getLogger("scheduler")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(levelname)s: %(message)s")
 
 
 class SchedulerService:
@@ -32,15 +36,15 @@ class SchedulerService:
 
     async def generate_and_post_tweet(self):
         """Main job: Pick an article intelligently, generate a unique tweet, and post it."""
+        logger.info("=== TWEET JOB STARTED ===")
         async with async_session() as db:
             try:
-                # Scan for new articles first
                 await ArticleService.scan_and_import_articles(db)
 
-                # Smart article selection: pick the least-tweeted article for balanced coverage
                 article = await ArticleService.get_least_tweeted_article(db)
 
                 if not article:
+                    logger.warning("No articles available for tweet generation")
                     log = ActivityLog(
                         action="tweet_skipped",
                         details="No articles available for tweet generation",
@@ -49,6 +53,8 @@ class SchedulerService:
                     db.add(log)
                     await db.commit()
                     return
+
+                logger.info(f"Selected article: #{article.id} - {article.title[:60]}")
 
                 # Get previous tweets about this article to avoid repetition
                 prev_result = await db.execute(
@@ -80,17 +86,20 @@ class SchedulerService:
                 await db.commit()
                 await db.refresh(tweet)
 
-                # Immediately try to post EN tweet
+                logger.info(f"Generated EN tweet ({len(tweet_content)} chars): {tweet_content[:80]}...")
+
                 post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
                 en_posted = post_result["success"]
 
                 if en_posted:
+                    logger.info(f"EN tweet posted successfully: {post_result.get('tweet_id', '?')}")
                     log = ActivityLog(
                         action="auto_tweet_posted",
                         details=f"[EN] Posted: {tweet_content[:100]}...",
                         status="success",
                     )
                 else:
+                    logger.warning(f"EN tweet failed, will retry: {post_result.get('error', '')[:100]}")
                     log = ActivityLog(
                         action="tweet_retry_pending",
                         details=f"[EN] Queued for retry: {post_result.get('error', '')[:150]}",
@@ -102,7 +111,6 @@ class SchedulerService:
                 db.add(log)
                 await db.commit()
 
-                # Generate and post Turkish translation
                 try:
                     tr_content = await ai_service.translate_tweet_to_turkish(
                         tweet_content, model=model
@@ -142,6 +150,7 @@ class SchedulerService:
                     db.add(log_tr)
                     await db.commit()
                 except Exception as tr_err:
+                    logger.error(f"TR tweet error: {tr_err}")
                     log_tr = ActivityLog(
                         action="tr_tweet_error",
                         details=f"Failed to generate/post TR tweet: {str(tr_err)[:200]}",
@@ -150,7 +159,10 @@ class SchedulerService:
                     db.add(log_tr)
                     await db.commit()
 
+                logger.info("=== TWEET JOB FINISHED ===")
+
             except Exception as e:
+                logger.error(f"TWEET JOB ERROR: {e}", exc_info=True)
                 log = ActivityLog(
                     action="auto_tweet_error",
                     details=f"Error in auto tweet job: {str(e)}",
@@ -161,6 +173,7 @@ class SchedulerService:
 
     async def retry_queued_tweets(self):
         """Retry posting queued tweets that failed due to 503 or other transient errors."""
+        logger.info("--- RETRY JOB running ---")
         async with async_session() as db:
             try:
                 result = await db.execute(
@@ -172,7 +185,10 @@ class SchedulerService:
                 queued_tweets = result.scalars().all()
 
                 if not queued_tweets:
+                    logger.info("No queued tweets to retry")
                     return
+
+                logger.info(f"Retrying {len(queued_tweets)} queued tweets")
 
                 for tweet in queued_tweets:
                     # Check retry count (stored in a simple way)
@@ -206,6 +222,7 @@ class SchedulerService:
                 await db.commit()
 
             except Exception as e:
+                logger.error(f"RETRY JOB ERROR: {e}", exc_info=True)
                 log = ActivityLog(
                     action="retry_job_error",
                     details=f"Error in retry job: {str(e)}",
@@ -290,19 +307,24 @@ class SchedulerService:
 
     async def check_and_reply_mentions(self):
         """Check for new mentions, like them, and auto-reply. Follows conversation chains."""
+        logger.info("--- MENTION JOB running ---")
         auto_reply = await self._get_setting("auto_reply_enabled", str(self._auto_reply))
         if auto_reply.lower() != "true":
+            logger.info("Auto-reply disabled, skipping")
             return
 
         async with async_session() as db:
             try:
-                # Get the last processed mention ID
                 last_mention_id = await self._get_setting("last_mention_id", None)
+                logger.info(f"Checking mentions (since_id={last_mention_id})")
 
                 mentions = await twitter_service.get_mentions(since_id=last_mention_id)
 
                 if not mentions:
+                    logger.info("No new mentions found")
                     return
+
+                logger.info(f"Found {len(mentions)} new mentions")
 
                 model = await self._get_ai_model()
 
@@ -405,6 +427,7 @@ class SchedulerService:
                 await db.commit()
 
             except Exception as e:
+                logger.error(f"MENTION JOB ERROR: {e}", exc_info=True)
                 log = ActivityLog(
                     action="auto_reply_error",
                     details=f"Error checking mentions: {str(e)}",
@@ -415,10 +438,32 @@ class SchedulerService:
 
     async def update_metrics_job(self):
         """Periodically update tweet engagement metrics."""
+        logger.info("--- METRICS JOB running ---")
         async with async_session() as db:
             try:
-                await twitter_service.update_tweet_metrics(db)
+                result = await db.execute(
+                    select(Tweet).where(Tweet.status == "posted", Tweet.tweet_id.isnot(None))
+                )
+                tweets = result.scalars().all()
+                logger.info(f"Updating metrics for {len(tweets)} posted tweets")
+
+                updated_count = 0
+                for tweet in tweets:
+                    metrics = await twitter_service.get_tweet_metrics(tweet.tweet_id)
+                    if metrics:
+                        tweet.likes = metrics.get("likes", tweet.likes)
+                        tweet.retweets = metrics.get("retweets", tweet.retweets)
+                        tweet.replies_count = metrics.get("replies", tweet.replies_count)
+                        tweet.impressions = metrics.get("impressions", tweet.impressions)
+                        tweet.bookmarks = metrics.get("bookmarks", tweet.bookmarks)
+                        updated_count += 1
+                    else:
+                        logger.warning(f"No metrics returned for tweet {tweet.tweet_id}")
+
+                await db.commit()
+                logger.info(f"Metrics updated for {updated_count}/{len(tweets)} tweets")
             except Exception as e:
+                logger.error(f"METRICS JOB ERROR: {e}", exc_info=True)
                 log = ActivityLog(
                     action="metrics_update_error",
                     details=f"Error updating metrics: {str(e)}",
@@ -430,9 +475,12 @@ class SchedulerService:
     def start(self):
         """Start the scheduler with all jobs."""
         if self.is_running:
+            logger.info("Scheduler already running, skipping start")
             return
 
-        # Tweet posting job
+        logger.info(f"Starting scheduler (tweet interval: {self._tweet_interval}min)")
+
+        # Tweet posting job - first run after 2 minutes, then every interval
         self.scheduler.add_job(
             self.generate_and_post_tweet,
             IntervalTrigger(minutes=self._tweet_interval),
@@ -459,10 +507,10 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Metrics update job (every 30 minutes)
+        # Metrics update job (every 15 minutes instead of 30)
         self.scheduler.add_job(
             self.update_metrics_job,
-            IntervalTrigger(minutes=30),
+            IntervalTrigger(minutes=15),
             id="metrics_job",
             name="Metrics Updater",
             replace_existing=True,
@@ -470,6 +518,22 @@ class SchedulerService:
 
         self.scheduler.start()
         self.is_running = True
+
+        logger.info("Scheduler started with all jobs:")
+        for job in self.scheduler.get_jobs():
+            logger.info(f"  Job: {job.id} -> next run: {job.next_run_time}")
+
+    async def run_initial_jobs(self):
+        """Run metrics and retry immediately after startup."""
+        logger.info("Running initial jobs after startup...")
+        try:
+            await self.update_metrics_job()
+        except Exception as e:
+            logger.error(f"Initial metrics job error: {e}")
+        try:
+            await self.retry_queued_tweets()
+        except Exception as e:
+            logger.error(f"Initial retry job error: {e}")
 
     def stop(self):
         """Stop the scheduler."""
