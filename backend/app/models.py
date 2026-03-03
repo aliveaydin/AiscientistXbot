@@ -27,7 +27,8 @@ class Tweet(Base):
     content = Column(Text, nullable=False)
     article_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
     ai_model_used = Column(String(50), nullable=False)
-    status = Column(String(50), default="draft")  # draft, posted, failed
+    status = Column(String(50), default="draft")  # draft, queued, posted, failed
+    retry_count = Column(Integer, default=0)
     posted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
