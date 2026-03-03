@@ -285,6 +285,34 @@ class TwitterService:
             None, lambda: self._get_mentions_api(since_id)
         )
 
+    def _like_tweet_api(self, tweet_id: str) -> dict:
+        """Like a tweet via Twitter v2 API."""
+        try:
+            user_id = self._get_user_id_api()
+            if not user_id:
+                return {"success": False, "error": "Could not get user ID"}
+
+            resp = requests.post(
+                f"https://api.twitter.com/2/users/{user_id}/likes",
+                json={"tweet_id": tweet_id},
+                auth=self.oauth,
+                headers=self._get_headers(),
+                timeout=15,
+            )
+            if resp.status_code in (200, 201):
+                return {"success": True}
+            else:
+                return {"success": False, "error": f"{resp.status_code}: {resp.text[:200]}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def like_tweet(self, tweet_id: str) -> dict:
+        """Like a tweet."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: self._like_tweet_api(tweet_id)
+        )
+
     async def update_tweet_metrics(self, db: AsyncSession):
         """Update metrics for all posted tweets."""
         result = await db.execute(

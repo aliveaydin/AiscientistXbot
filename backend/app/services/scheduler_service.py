@@ -214,8 +214,82 @@ class SchedulerService:
                 db.add(log)
                 await db.commit()
 
+    async def _find_conversation_context(self, mention: dict, db) -> dict:
+        """
+        Find the conversation context for a mention.
+        Traces the reply chain back to find:
+        - The root tweet (our original tweet)
+        - The article content for context
+        - The full conversation history for better replies
+        Returns dict with: root_tweet, article_content, conversation_history, or None if not our conversation.
+        """
+        parent_id = mention.get("parent_tweet_id")
+        if not parent_id:
+            return None
+
+        conversation_history = []
+
+        # Check 1: Is the parent one of our original tweets?
+        result = await db.execute(
+            select(Tweet).where(Tweet.tweet_id == parent_id)
+        )
+        root_tweet = result.scalar_one_or_none()
+
+        if root_tweet:
+            # Direct reply to our tweet
+            article_content = None
+            if root_tweet.article_id:
+                art_result = await db.execute(
+                    select(Article).where(Article.id == root_tweet.article_id)
+                )
+                article_obj = art_result.scalar_one_or_none()
+                if article_obj:
+                    article_content = article_obj.content
+
+            return {
+                "root_tweet": root_tweet,
+                "article_content": article_content,
+                "conversation_history": [],
+            }
+
+        # Check 2: Is the parent one of our replies? (conversation chain)
+        result = await db.execute(
+            select(Reply).where(Reply.reply_id == parent_id)
+        )
+        our_reply = result.scalar_one_or_none()
+
+        if our_reply:
+            # Someone replied to our reply — trace back to root tweet
+            conversation_history.append(f"User @{mention.get('author_username', '?')}: {mention['text']}")
+            conversation_history.append(f"Bot: {our_reply.response_text}")
+            conversation_history.append(f"User @{our_reply.incoming_user}: {our_reply.incoming_text}")
+
+            # Get the root tweet from the reply's tweet_id (DB foreign key)
+            tweet_result = await db.execute(
+                select(Tweet).where(Tweet.id == our_reply.tweet_id)
+            )
+            root_tweet = tweet_result.scalar_one_or_none()
+
+            if root_tweet:
+                article_content = None
+                if root_tweet.article_id:
+                    art_result = await db.execute(
+                        select(Article).where(Article.id == root_tweet.article_id)
+                    )
+                    article_obj = art_result.scalar_one_or_none()
+                    if article_obj:
+                        article_content = article_obj.content
+
+                return {
+                    "root_tweet": root_tweet,
+                    "article_content": article_content,
+                    "conversation_history": list(reversed(conversation_history)),
+                }
+
+        return None
+
     async def check_and_reply_mentions(self):
-        """Check for new mentions and auto-reply."""
+        """Check for new mentions, like them, and auto-reply. Follows conversation chains."""
         auto_reply = await self._get_setting("auto_reply_enabled", str(self._auto_reply))
         if auto_reply.lower() != "true":
             return
@@ -233,38 +307,49 @@ class SchedulerService:
                 model = await self._get_ai_model()
 
                 for mention in mentions:
-                    # Check if we already replied to this
+                    # Skip if we already replied to this mention
                     existing = await db.execute(
                         select(Reply).where(Reply.incoming_reply_id == mention["id"])
                     )
                     if existing.scalar_one_or_none():
                         continue
 
-                    # Find the parent tweet in our DB
-                    parent_tweet = None
-                    article_content = None
-                    if mention.get("parent_tweet_id"):
-                        result = await db.execute(
-                            select(Tweet).where(Tweet.tweet_id == mention["parent_tweet_id"])
-                        )
-                        parent_tweet = result.scalar_one_or_none()
+                    # Like the incoming reply first
+                    like_result = await twitter_service.like_tweet(mention["id"])
+                    if like_result["success"]:
+                        print(f"[Bot] Liked reply from @{mention.get('author_username', '?')}")
+                    else:
+                        print(f"[Bot] Could not like reply: {like_result.get('error', '')[:100]}")
 
-                        if parent_tweet and parent_tweet.article_id:
-                            article = await db.execute(
-                                select(Article).where(Article.id == parent_tweet.article_id)
-                            )
-                            article_obj = article.scalar_one_or_none()
-                            if article_obj:
-                                article_content = article_obj.content
+                    # Find conversation context (works for both direct replies and chain replies)
+                    context = await self._find_conversation_context(mention, db)
 
-                    if not parent_tweet:
+                    if not context:
+                        # Not part of our conversation, skip
                         continue
+
+                    root_tweet = context["root_tweet"]
+                    article_content = context["article_content"]
+                    conversation_history = context["conversation_history"]
+
+                    # Build the prompt with conversation history for better context
+                    original_tweet_text = root_tweet.content
+                    incoming_text = mention["text"]
+
+                    # If there's conversation history, include it for richer replies
+                    if conversation_history:
+                        conv_str = "\n".join(conversation_history)
+                        incoming_text = f"""[Conversation thread so far]:
+{conv_str}
+
+[Latest reply from @{mention.get('author_username', '?')}]:
+{mention['text']}"""
 
                     # Generate reply
                     reply_text = await ai_service.generate_reply(
-                        original_tweet=parent_tweet.content,
-                        incoming_reply=mention["text"],
-                        reply_user=mention["author_username"],
+                        original_tweet=original_tweet_text,
+                        incoming_reply=incoming_text,
+                        reply_user=mention.get("author_username", "unknown"),
                         article_content=article_content,
                         model=model,
                     )
@@ -274,9 +359,9 @@ class SchedulerService:
 
                     # Save reply to DB
                     reply = Reply(
-                        tweet_id=parent_tweet.id,
+                        tweet_id=root_tweet.id,
                         incoming_text=mention["text"],
-                        incoming_user=mention["author_username"],
+                        incoming_user=mention.get("author_username", "unknown"),
                         incoming_reply_id=mention["id"],
                         response_text=reply_text,
                         ai_model_used=model,
@@ -286,7 +371,7 @@ class SchedulerService:
                     await db.commit()
                     await db.refresh(reply)
 
-                    # Post reply
+                    # Post reply (reply to the mention's tweet, not the original)
                     result = await twitter_service.post_reply(
                         reply_text, mention["id"], db, reply.id
                     )
@@ -294,18 +379,18 @@ class SchedulerService:
                     if result["success"]:
                         log = ActivityLog(
                             action="auto_reply_posted",
-                            details=f"Replied to @{mention['author_username']}: {reply_text[:100]}...",
+                            details=f"Replied to @{mention.get('author_username', '?')}: {reply_text[:100]}...",
                             status="success",
                         )
                     else:
                         log = ActivityLog(
                             action="auto_reply_failed",
-                            details=f"Failed to reply to @{mention['author_username']}: {result.get('error')}",
+                            details=f"Failed to reply to @{mention.get('author_username', '?')}: {result.get('error', '')[:150]}",
                             status="error",
                         )
                     db.add(log)
 
-                # Update last mention ID
+                # Update last mention ID (mentions are returned newest-first)
                 if mentions:
                     latest_id = mentions[0]["id"]
                     result = await db.execute(
