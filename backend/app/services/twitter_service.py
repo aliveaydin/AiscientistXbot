@@ -1,4 +1,3 @@
-import tweepy
 import requests
 from requests_oauthlib import OAuth1
 from typing import Optional, List, Dict
@@ -13,21 +12,7 @@ import json
 
 class TwitterService:
     def __init__(self):
-        self._client = None
         self._oauth = None
-
-    @property
-    def client(self) -> tweepy.Client:
-        """Twitter API v2 client using OAuth1 User Context (required for mentions, metrics, etc.)."""
-        if self._client is None:
-            self._client = tweepy.Client(
-                consumer_key=settings.twitter_api_key,
-                consumer_secret=settings.twitter_api_secret,
-                access_token=settings.twitter_access_token,
-                access_token_secret=settings.twitter_access_token_secret,
-                wait_on_rate_limit=True,
-            )
-        return self._client
 
     @property
     def oauth(self) -> OAuth1:
@@ -189,20 +174,19 @@ class TwitterService:
 
             return {"success": False, "error": str(e)}
 
-    async def get_tweet_metrics(self, tweet_id: str) -> dict:
-        """Get engagement metrics for a tweet."""
+    def _get_tweet_metrics_api(self, tweet_id: str) -> dict:
+        """Get tweet metrics via direct v2 API with OAuth1."""
         try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.get_tweet(
-                    tweet_id,
-                    tweet_fields=["public_metrics", "created_at"],
-                ),
+            resp = requests.get(
+                f"https://api.twitter.com/2/tweets/{tweet_id}",
+                params={"tweet.fields": "public_metrics,created_at"},
+                auth=self.oauth,
+                headers=self._get_headers(),
+                timeout=15,
             )
-
-            if response.data:
-                metrics = getattr(response.data, "public_metrics", {}) or {}
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                metrics = data.get("public_metrics", {})
                 return {
                     "likes": metrics.get("like_count", 0),
                     "retweets": metrics.get("retweet_count", 0),
@@ -214,54 +198,92 @@ class TwitterService:
         except Exception:
             return {}
 
-    async def get_mentions(self, since_id: Optional[str] = None) -> List[Dict]:
-        """Get recent mentions/replies to our tweets."""
+    async def get_tweet_metrics(self, tweet_id: str) -> dict:
+        """Get engagement metrics for a tweet."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: self._get_tweet_metrics_api(tweet_id)
+        )
+
+    def _get_user_id_api(self) -> Optional[str]:
+        """Get authenticated user's ID via direct API."""
         try:
-            loop = asyncio.get_event_loop()
+            resp = requests.get(
+                "https://api.twitter.com/2/users/me",
+                auth=self.oauth,
+                headers=self._get_headers(),
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("data", {}).get("id")
+            return None
+        except Exception:
+            return None
 
-            me = await loop.run_in_executor(None, lambda: self.client.get_me())
-            user_id = me.data.id
+    def _get_mentions_api(self, since_id: Optional[str] = None) -> List[Dict]:
+        """Get mentions via direct v2 API with OAuth1."""
+        try:
+            user_id = self._get_user_id_api()
+            if not user_id:
+                print("[TwitterBot] Could not get user ID for mentions")
+                return []
 
-            kwargs = {
-                "id": user_id,
-                "tweet_fields": ["created_at", "in_reply_to_user_id", "referenced_tweets", "author_id"],
-                "user_fields": ["username"],
-                "expansions": ["author_id", "referenced_tweets.id"],
+            params = {
+                "tweet.fields": "created_at,in_reply_to_user_id,referenced_tweets,author_id",
+                "user.fields": "username",
+                "expansions": "author_id,referenced_tweets.id",
                 "max_results": 50,
             }
             if since_id:
-                kwargs["since_id"] = since_id
+                params["since_id"] = since_id
 
-            response = await loop.run_in_executor(
-                None, lambda: self.client.get_users_mentions(**kwargs)
+            resp = requests.get(
+                f"https://api.twitter.com/2/users/{user_id}/mentions",
+                params=params,
+                auth=self.oauth,
+                headers=self._get_headers(),
+                timeout=15,
             )
 
-            mentions = []
-            if response.data:
-                users = {u.id: u for u in (response.includes.get("users", []) if response.includes else [])}
-                for tweet in response.data:
-                    author = users.get(tweet.author_id)
-                    parent_tweet_id = None
-                    if tweet.referenced_tweets:
-                        for ref in tweet.referenced_tweets:
-                            if ref.type == "replied_to":
-                                parent_tweet_id = str(ref.id)
-                                break
+            if resp.status_code != 200:
+                print(f"[TwitterBot] Mentions API returned {resp.status_code}: {resp.text[:200]}")
+                return []
 
-                    mentions.append({
-                        "id": str(tweet.id),
-                        "text": tweet.text,
-                        "author_id": str(tweet.author_id),
-                        "author_username": author.username if author else "unknown",
-                        "parent_tweet_id": parent_tweet_id,
-                        "created_at": tweet.created_at,
-                    })
+            data = resp.json()
+            tweets = data.get("data", [])
+            includes = data.get("includes", {})
+            users_list = includes.get("users", [])
+            users = {u["id"]: u for u in users_list}
+
+            mentions = []
+            for tweet in tweets:
+                author = users.get(tweet.get("author_id"))
+                parent_tweet_id = None
+                for ref in tweet.get("referenced_tweets", []):
+                    if ref.get("type") == "replied_to":
+                        parent_tweet_id = str(ref["id"])
+                        break
+
+                mentions.append({
+                    "id": str(tweet["id"]),
+                    "text": tweet.get("text", ""),
+                    "author_id": str(tweet.get("author_id", "")),
+                    "author_username": author.get("username", "unknown") if author else "unknown",
+                    "parent_tweet_id": parent_tweet_id,
+                    "created_at": tweet.get("created_at"),
+                })
 
             return mentions
-
         except Exception as e:
-            print(f"Error getting mentions: {e}")
+            print(f"[TwitterBot] Error getting mentions: {e}")
             return []
+
+    async def get_mentions(self, since_id: Optional[str] = None) -> List[Dict]:
+        """Get recent mentions/replies to our tweets."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: self._get_mentions_api(since_id)
+        )
 
     async def update_tweet_metrics(self, db: AsyncSession):
         """Update metrics for all posted tweets."""
@@ -285,15 +307,25 @@ class TwitterService:
         """Test Twitter API connection."""
         try:
             loop = asyncio.get_event_loop()
-            me = await loop.run_in_executor(None, lambda: self.client.get_me())
-            if me.data:
-                return {
-                    "success": True,
-                    "username": me.data.username,
-                    "name": me.data.name,
-                    "id": str(me.data.id),
-                }
-            return {"success": False, "error": "No user data returned"}
+
+            def _test():
+                resp = requests.get(
+                    "https://api.twitter.com/2/users/me",
+                    auth=self.oauth,
+                    headers=self._get_headers(),
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json().get("data", {})
+                    return {
+                        "success": True,
+                        "username": data.get("username"),
+                        "name": data.get("name"),
+                        "id": data.get("id"),
+                    }
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+
+            return await loop.run_in_executor(None, _test)
         except Exception as e:
             return {"success": False, "error": str(e)}
 
