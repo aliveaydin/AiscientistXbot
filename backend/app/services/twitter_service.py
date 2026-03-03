@@ -18,10 +18,9 @@ class TwitterService:
 
     @property
     def client(self) -> tweepy.Client:
-        """Twitter API v2 client (for read operations)."""
+        """Twitter API v2 client using OAuth1 User Context (required for mentions, metrics, etc.)."""
         if self._client is None:
             self._client = tweepy.Client(
-                bearer_token=settings.twitter_bearer_token,
                 consumer_key=settings.twitter_api_key,
                 consumer_secret=settings.twitter_api_secret,
                 access_token=settings.twitter_access_token,
