@@ -55,6 +55,18 @@ Rules:
 
 Output ONLY the reply text, nothing else."""
 
+TRANSLATE_TO_TURKISH_PROMPT = """You are a bilingual AI researcher fluent in both English and Turkish. Translate the following English science tweet into Turkish.
+
+Rules:
+- Keep the same tone, style, and meaning
+- Keep technical terms that are commonly used in English (e.g. "transformer", "attention", "benchmark") but add brief Turkish context if needed
+- STRICT 280 character limit in Turkish — count every character including spaces and hashtags
+- Keep hashtags in English (they work better for reach)
+- NO emojis. NO dashes (--).
+- The translation should sound natural in Turkish, not like machine translation
+- If the original tweet references specific numbers, metrics, or paper details, keep them exact
+- Output ONLY the translated tweet text. Nothing else. No quotes around it."""
+
 SUMMARY_SYSTEM_PROMPT = """You are a PhD-level AI researcher analyzing a scientific article. Extract 3-5 distinct, tweetable insights. Focus on:
 1. The core finding or contribution
 2. A surprising or counterintuitive result
@@ -176,6 +188,19 @@ IMPORTANT: The following tweets were already posted about this article. Write so
         system = TWEET_SYSTEM_PROMPT
 
         return await self._call_ai(system, user_prompt, model)
+
+    async def translate_tweet_to_turkish(
+        self,
+        english_tweet: str,
+        model: Optional[str] = None,
+    ) -> str:
+        """Translate an English tweet to Turkish."""
+        user_prompt = f"""English tweet:
+{english_tweet}
+
+Translate this tweet to Turkish. Keep hashtags in English. Stay within 280 characters."""
+
+        return await self._call_ai(TRANSLATE_TO_TURKISH_PROMPT, user_prompt, model)
 
     async def generate_reply(
         self,

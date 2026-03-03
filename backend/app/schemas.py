@@ -48,6 +48,8 @@ class TweetResponse(BaseModel):
     article_id: Optional[int] = None
     ai_model_used: str
     status: str
+    language: str = "en"
+    parent_tweet_db_id: Optional[int] = None
     posted_at: Optional[datetime] = None
     created_at: datetime
     likes: int = 0

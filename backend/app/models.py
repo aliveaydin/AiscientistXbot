@@ -29,6 +29,8 @@ class Tweet(Base):
     ai_model_used = Column(String(50), nullable=False)
     status = Column(String(50), default="draft")  # draft, queued, posted, failed
     retry_count = Column(Integer, default=0)
+    language = Column(String(10), default="en")  # en, tr
+    parent_tweet_db_id = Column(Integer, nullable=True)  # links TR tweet to its EN original
     posted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

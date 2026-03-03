@@ -68,44 +68,87 @@ class SchedulerService:
                 if len(tweet_content) > 280:
                     tweet_content = tweet_content[:277] + "..."
 
-                # Save to DB as "queued" — retry job will attempt to post
+                # Save EN tweet to DB as "queued"
                 tweet = Tweet(
                     content=tweet_content,
                     article_id=article.id,
                     ai_model_used=model,
                     status="queued",
+                    language="en",
                 )
                 db.add(tweet)
-
-                log = ActivityLog(
-                    action="tweet_queued",
-                    details=f"Queued tweet from article '{article.title}': {tweet_content[:100]}...",
-                    status="success",
-                )
-                db.add(log)
                 await db.commit()
                 await db.refresh(tweet)
 
-                # Immediately try to post
+                # Immediately try to post EN tweet
                 post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
-                if post_result["success"]:
-                    log2 = ActivityLog(
+                en_posted = post_result["success"]
+
+                if en_posted:
+                    log = ActivityLog(
                         action="auto_tweet_posted",
-                        details=f"Posted tweet: {tweet_content[:100]}...",
+                        details=f"[EN] Posted: {tweet_content[:100]}...",
                         status="success",
                     )
                 else:
-                    log2 = ActivityLog(
+                    log = ActivityLog(
                         action="tweet_retry_pending",
-                        details=f"Tweet queued for retry (API returned: {post_result.get('error', '')[:150]})",
+                        details=f"[EN] Queued for retry: {post_result.get('error', '')[:150]}",
                         status="warning",
                     )
-                    # Mark as queued (post_tweet may have set it to failed)
                     await db.refresh(tweet)
                     if tweet.status == "failed":
                         tweet.status = "queued"
-                db.add(log2)
+                db.add(log)
                 await db.commit()
+
+                # Generate and post Turkish translation
+                try:
+                    tr_content = await ai_service.translate_tweet_to_turkish(
+                        tweet_content, model=model
+                    )
+                    if len(tr_content) > 280:
+                        tr_content = tr_content[:277] + "..."
+
+                    tr_tweet = Tweet(
+                        content=tr_content,
+                        article_id=article.id,
+                        ai_model_used=model,
+                        status="queued",
+                        language="tr",
+                        parent_tweet_db_id=tweet.id,
+                    )
+                    db.add(tr_tweet)
+                    await db.commit()
+                    await db.refresh(tr_tweet)
+
+                    # Post TR tweet
+                    tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
+                    if tr_result["success"]:
+                        log_tr = ActivityLog(
+                            action="auto_tweet_posted",
+                            details=f"[TR] Posted: {tr_content[:100]}...",
+                            status="success",
+                        )
+                    else:
+                        log_tr = ActivityLog(
+                            action="tweet_retry_pending",
+                            details=f"[TR] Queued for retry: {tr_result.get('error', '')[:150]}",
+                            status="warning",
+                        )
+                        await db.refresh(tr_tweet)
+                        if tr_tweet.status == "failed":
+                            tr_tweet.status = "queued"
+                    db.add(log_tr)
+                    await db.commit()
+                except Exception as tr_err:
+                    log_tr = ActivityLog(
+                        action="tr_tweet_error",
+                        details=f"Failed to generate/post TR tweet: {str(tr_err)[:200]}",
+                        status="error",
+                    )
+                    db.add(log_tr)
+                    await db.commit()
 
             except Exception as e:
                 log = ActivityLog(
