@@ -479,10 +479,10 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Mention checking job (every 10 minutes)
+        # Mention checking job (every 5 minutes)
         self.scheduler.add_job(
             self.check_and_reply_mentions,
-            IntervalTrigger(minutes=10),
+            IntervalTrigger(minutes=5),
             id="mention_job",
             name="Mention Checker",
             replace_existing=True,
