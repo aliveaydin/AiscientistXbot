@@ -437,31 +437,12 @@ class SchedulerService:
                 await db.commit()
 
     async def update_metrics_job(self):
-        """Periodically update tweet engagement metrics."""
+        """Periodically update tweet engagement metrics using batch API."""
         logger.info("--- METRICS JOB running ---")
         async with async_session() as db:
             try:
-                result = await db.execute(
-                    select(Tweet).where(Tweet.status == "posted", Tweet.tweet_id.isnot(None))
-                )
-                tweets = result.scalars().all()
-                logger.info(f"Updating metrics for {len(tweets)} posted tweets")
-
-                updated_count = 0
-                for tweet in tweets:
-                    metrics = await twitter_service.get_tweet_metrics(tweet.tweet_id)
-                    if metrics:
-                        tweet.likes = metrics.get("likes", tweet.likes)
-                        tweet.retweets = metrics.get("retweets", tweet.retweets)
-                        tweet.replies_count = metrics.get("replies", tweet.replies_count)
-                        tweet.impressions = metrics.get("impressions", tweet.impressions)
-                        tweet.bookmarks = metrics.get("bookmarks", tweet.bookmarks)
-                        updated_count += 1
-                    else:
-                        logger.warning(f"No metrics returned for tweet {tweet.tweet_id}")
-
-                await db.commit()
-                logger.info(f"Metrics updated for {updated_count}/{len(tweets)} tweets")
+                await twitter_service.update_tweet_metrics(db)
+                logger.info("Metrics batch update completed")
             except Exception as e:
                 logger.error(f"METRICS JOB ERROR: {e}", exc_info=True)
                 log = ActivityLog(
@@ -489,28 +470,28 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Retry queued tweets (every 5 minutes)
+        # Retry queued tweets (every 30 minutes)
         self.scheduler.add_job(
             self.retry_queued_tweets,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(minutes=30),
             id="retry_job",
             name="Tweet Retry Queue",
             replace_existing=True,
         )
 
-        # Mention checking job (every 5 minutes)
+        # Mention checking job (every 10 minutes)
         self.scheduler.add_job(
             self.check_and_reply_mentions,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(minutes=10),
             id="mention_job",
             name="Mention Checker",
             replace_existing=True,
         )
 
-        # Metrics update job (every 15 minutes instead of 30)
+        # Metrics update job (every 2 hours, batch API = 1 call per 100 tweets)
         self.scheduler.add_job(
             self.update_metrics_job,
-            IntervalTrigger(minutes=15),
+            IntervalTrigger(hours=2),
             id="metrics_job",
             name="Metrics Updater",
             replace_existing=True,

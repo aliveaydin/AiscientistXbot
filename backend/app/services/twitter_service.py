@@ -1,7 +1,8 @@
+import logging
 import requests
 from requests_oauthlib import OAuth1
 from typing import Optional, List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.config import settings
@@ -9,14 +10,16 @@ from app.models import Tweet, Reply, ActivityLog
 import asyncio
 import json
 
+logger = logging.getLogger("twitter")
+
 
 class TwitterService:
     def __init__(self):
         self._oauth = None
+        self._cached_user_id: Optional[str] = None
 
     @property
     def oauth(self) -> OAuth1:
-        """OAuth1 auth for direct API calls (write operations)."""
         if self._oauth is None:
             self._oauth = OAuth1(
                 settings.twitter_api_key,
@@ -27,7 +30,6 @@ class TwitterService:
         return self._oauth
 
     def _get_headers(self) -> dict:
-        """Standard headers to avoid cloud IP blocks."""
         return {
             "Content-Type": "application/json",
             "User-Agent": "AiScientistBot/1.0",
@@ -174,39 +176,54 @@ class TwitterService:
 
             return {"success": False, "error": str(e)}
 
-    def _get_tweet_metrics_api(self, tweet_id: str) -> dict:
-        """Get tweet metrics via direct v2 API with OAuth1."""
-        try:
-            resp = requests.get(
-                f"https://api.twitter.com/2/tweets/{tweet_id}",
-                params={"tweet.fields": "public_metrics,created_at"},
-                auth=self.oauth,
-                headers=self._get_headers(),
-                timeout=15,
-            )
-            if resp.status_code == 200:
-                data = resp.json().get("data", {})
-                metrics = data.get("public_metrics", {})
-                return {
-                    "likes": metrics.get("like_count", 0),
-                    "retweets": metrics.get("retweet_count", 0),
-                    "replies": metrics.get("reply_count", 0),
-                    "impressions": metrics.get("impression_count", 0),
-                    "bookmarks": metrics.get("bookmark_count", 0),
-                }
+    def _get_tweets_metrics_batch(self, tweet_ids: List[str]) -> Dict[str, dict]:
+        """Get metrics for up to 100 tweets in a SINGLE API call."""
+        if not tweet_ids:
             return {}
-        except Exception:
-            return {}
+        results = {}
+        # Twitter v2 allows up to 100 IDs per request
+        for i in range(0, len(tweet_ids), 100):
+            batch = tweet_ids[i:i+100]
+            try:
+                resp = requests.get(
+                    "https://api.twitter.com/2/tweets",
+                    params={
+                        "ids": ",".join(batch),
+                        "tweet.fields": "public_metrics",
+                    },
+                    auth=self.oauth,
+                    headers=self._get_headers(),
+                    timeout=20,
+                )
+                if resp.status_code == 200:
+                    for tweet_data in resp.json().get("data", []):
+                        tid = tweet_data["id"]
+                        metrics = tweet_data.get("public_metrics", {})
+                        results[tid] = {
+                            "likes": metrics.get("like_count", 0),
+                            "retweets": metrics.get("retweet_count", 0),
+                            "replies": metrics.get("reply_count", 0),
+                            "impressions": metrics.get("impression_count", 0),
+                            "bookmarks": metrics.get("bookmark_count", 0),
+                        }
+                else:
+                    logger.warning(f"Batch metrics returned {resp.status_code}")
+            except Exception as e:
+                logger.error(f"Batch metrics error: {e}")
+        return results
 
     async def get_tweet_metrics(self, tweet_id: str) -> dict:
-        """Get engagement metrics for a tweet."""
+        """Get engagement metrics for a single tweet (legacy, prefer batch)."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, lambda: self._get_tweet_metrics_api(tweet_id)
+        result = await loop.run_in_executor(
+            None, lambda: self._get_tweets_metrics_batch([tweet_id])
         )
+        return result.get(tweet_id, {})
 
     def _get_user_id_api(self) -> Optional[str]:
-        """Get authenticated user's ID via direct API."""
+        """Get authenticated user's ID. Cached after first call to save API reads."""
+        if self._cached_user_id:
+            return self._cached_user_id
         try:
             resp = requests.get(
                 "https://api.twitter.com/2/users/me",
@@ -215,7 +232,9 @@ class TwitterService:
                 timeout=15,
             )
             if resp.status_code == 200:
-                return resp.json().get("data", {}).get("id")
+                self._cached_user_id = resp.json().get("data", {}).get("id")
+                logger.info(f"User ID cached: {self._cached_user_id}")
+                return self._cached_user_id
             return None
         except Exception:
             return None
@@ -314,15 +333,31 @@ class TwitterService:
         )
 
     async def update_tweet_metrics(self, db: AsyncSession):
-        """Update metrics for all posted tweets."""
+        """Update metrics for recent posted tweets using batch API (1 call per 100 tweets)."""
+        cutoff = datetime.utcnow() - timedelta(days=7)
         result = await db.execute(
-            select(Tweet).where(Tweet.status == "posted", Tweet.tweet_id.isnot(None))
+            select(Tweet).where(
+                Tweet.status == "posted",
+                Tweet.tweet_id.isnot(None),
+                Tweet.posted_at >= cutoff,
+            )
         )
         tweets = result.scalars().all()
 
-        for tweet in tweets:
-            metrics = await self.get_tweet_metrics(tweet.tweet_id)
-            if metrics:
+        if not tweets:
+            return
+
+        tweet_map = {t.tweet_id: t for t in tweets}
+        tweet_ids = list(tweet_map.keys())
+
+        loop = asyncio.get_event_loop()
+        all_metrics = await loop.run_in_executor(
+            None, lambda: self._get_tweets_metrics_batch(tweet_ids)
+        )
+
+        for tid, metrics in all_metrics.items():
+            tweet = tweet_map.get(tid)
+            if tweet and metrics:
                 tweet.likes = metrics.get("likes", tweet.likes)
                 tweet.retweets = metrics.get("retweets", tweet.retweets)
                 tweet.replies_count = metrics.get("replies", tweet.replies_count)
