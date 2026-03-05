@@ -21,7 +21,7 @@ Rules:
 - Write like a researcher sharing their own thinking, not summarizing someone else's work
 - Reference specific methods, metrics, or results when possible (e.g. "achieves 94.2% accuracy" or "reduces compute by 3x")
 - Use technical terms where appropriate but briefly explain non-obvious ones
-- Use 2-4 TOPIC-SPECIFIC hashtags. Use the actual subject names: #DeepSeek, #SFT, #LoRA, #MoE, #RAG, #RLHF, #GPT4, #LLaMA, #Mistral, #Diffusion, #ViT, etc. Avoid generic hashtags like #AI or #Science unless no specific one fits.
+- Use exactly 1 TOPIC-SPECIFIC hashtag at the end. Use the actual subject name: #DeepSeek, #SFT, #LoRA, #MoE, #RAG, #RLHF, #GPT4, #LLaMA, #Mistral, #Diffusion, #ViT, etc. Only one. Never more than one. Avoid generic hashtags like #AI or #Science unless no specific one fits.
 - Draw your own inferences:
   * Connect findings across fields
   * Propose implications others haven't mentioned
@@ -207,7 +207,6 @@ class AIService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=4000,
             temperature=0.7,
         )
         return response.choices[0].message.content.strip()
