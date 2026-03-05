@@ -143,6 +143,35 @@ async def generate_blog_from_tweet(tweet_db_id: int, db: AsyncSession = Depends(
     return {"success": True, "created": created}
 
 
+@router.post("/generate-from-article/{article_id}")
+async def generate_blog_from_article(article_id: int, db: AsyncSession = Depends(get_db)):
+    """Generate EN + TR blog articles directly from a source article."""
+    result = await db.execute(select(Article).where(Article.id == article_id))
+    article = result.scalar_one_or_none()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    created = []
+    for lang in ["en", "tr"]:
+        blog_data = await ai_service.generate_blog_post(
+            article, tweet_content=None, language=lang
+        )
+        post = BlogPost(
+            tweet_id=None,
+            article_id=article.id,
+            title=blog_data["title"],
+            content=blog_data["content"],
+            language=lang,
+            ai_model_used=blog_data.get("model", "kimi-k2.5"),
+            status="draft",
+        )
+        db.add(post)
+        created.append({"language": lang, "title": blog_data["title"], "model": blog_data.get("model", "?")})
+
+    await db.commit()
+    return {"success": True, "created": created}
+
+
 @router.delete("/{post_id}")
 async def delete_blog_post(post_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a blog post."""

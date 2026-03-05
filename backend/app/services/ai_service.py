@@ -297,7 +297,7 @@ Your background knowledge on this topic:
     async def generate_blog_post(
         self,
         article: Article,
-        tweet_content: str,
+        tweet_content: Optional[str] = None,
         language: str = "en",
         model: Optional[str] = None,
     ) -> dict:
@@ -311,11 +311,16 @@ Your background knowledge on this topic:
 
 Source content:
 {content}
-
+"""
+        if tweet_content:
+            user_prompt += f"""
 Related tweet that was posted:
 "{tweet_content}"
 
 Write a detailed blog article analyzing this topic. The tweet above is a short summary you already posted; now write the full in-depth analysis. Reference the source paper by name. Include your own insights and inferences."""
+        else:
+            user_prompt += """
+Write a detailed blog article analyzing this topic. Reference the source paper by name. Include specific technical details, your own analysis and inferences beyond what the paper states."""
 
         system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
 

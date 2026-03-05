@@ -1,20 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, Globe, ChevronDown, ChevronUp, ExternalLink, 
-  Trash2, CheckCircle, Clock, Send, Copy, Filter
+  Trash2, CheckCircle, Clock, Send, Copy, Filter, Sparkles, RefreshCw
 } from 'lucide-react';
-import { getBlogPosts, updateBlogStatus, deleteBlogPost } from '../api';
+import { getBlogPosts, updateBlogStatus, deleteBlogPost, getArticles, generateBlogFromArticle } from '../api';
 
 export default function BlogPage() {
   const [posts, setPosts] = useState([]);
+  const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [selectedArticle, setSelectedArticle] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [langFilter, setLangFilter] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
 
   useEffect(() => {
-    loadPosts();
+    loadData();
   }, [langFilter]);
+
+  const loadData = async () => {
+    try {
+      const [postsRes, articlesRes] = await Promise.all([
+        getBlogPosts(langFilter),
+        getArticles(),
+      ]);
+      setPosts(postsRes.data);
+      setArticles(articlesRes.data);
+    } catch (err) {
+      console.error('Failed to load blog data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const loadPosts = async () => {
     try {
@@ -22,8 +40,24 @@ export default function BlogPage() {
       setPosts(res.data);
     } catch (err) {
       console.error('Failed to load blog posts:', err);
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!selectedArticle) {
+      alert('Please select a source paper first.');
+      return;
+    }
+    setGenerating(true);
+    try {
+      const res = await generateBlogFromArticle(parseInt(selectedArticle));
+      const created = res.data.created;
+      alert(`Blog articles generated!\n${created.map(c => `${c.language.toUpperCase()}: ${c.title}`).join('\n')}`);
+      await loadPosts();
+    } catch (err) {
+      alert('Failed to generate blog: ' + (err.response?.data?.detail || err.message));
     } finally {
-      setLoading(false);
+      setGenerating(false);
     }
   };
 
@@ -81,6 +115,41 @@ export default function BlogPage() {
         <h2 className="text-2xl font-bold text-white">Blog Articles</h2>
         <p className="text-gray-400 text-sm mt-1">
           AI-generated articles for each tweet. Copy and publish on X Articles manually.
+        </p>
+      </div>
+
+      {/* Generate Section */}
+      <div className="card">
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-purple-400" />
+          Generate Blog Article
+        </h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <select
+            value={selectedArticle}
+            onChange={(e) => setSelectedArticle(e.target.value)}
+            className="select-field md:col-span-2"
+          >
+            <option value="">Select a source paper...</option>
+            {articles.map((a) => (
+              <option key={a.id} value={a.id}>{a.title || a.filename}</option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleGenerate}
+            disabled={generating || !selectedArticle}
+            className="btn-primary justify-center"
+          >
+            {generating ? (
+              <><RefreshCw className="w-4 h-4 animate-spin" /> Generating...</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> Generate EN + TR</>
+            )}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Generates both English and Turkish blog articles using Kimi K2.5
         </p>
       </div>
 
