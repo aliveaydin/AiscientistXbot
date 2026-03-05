@@ -207,7 +207,7 @@ class AIService:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.7,
+            temperature=1,
         )
         return response.choices[0].message.content.strip()
 
@@ -331,12 +331,34 @@ Write a detailed blog article analyzing this topic. The tweet above is a short s
             except Exception as e:
                 logger.warning(f"Kimi K2.5 failed, falling back to default: {e}")
 
-        # Fallback to default AI model
-        result = await self._call_ai(system, user_prompt, model)
+        # Fallback to default AI model with higher token limit for long-form
+        logger.info(f"Falling back to default model for {language.upper()} blog")
+        fallback_model = model or settings.default_ai_model
+        if self._is_claude_model(fallback_model):
+            response = await self.anthropic_client.messages.create(
+                model=fallback_model,
+                max_tokens=4096,
+                system=system,
+                messages=[{"role": "user", "content": user_prompt}],
+                temperature=0.8,
+            )
+            result = response.content[0].text.strip()
+        else:
+            response = await self.openai_client.chat.completions.create(
+                model=fallback_model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=4096,
+                temperature=0.8,
+            )
+            result = response.choices[0].message.content.strip()
+
         lines = result.strip().split("\n", 1)
         title = lines[0].strip().lstrip("#").strip()
         body = lines[1].strip() if len(lines) > 1 else result
-        return {"title": title, "content": body, "model": model or settings.default_ai_model}
+        return {"title": title, "content": body, "model": fallback_model}
 
     async def summarize_article(self, article: Article, model: Optional[str] = None) -> list:
         """Summarize article into key insights."""

@@ -2,13 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, RefreshCw, Trash2, Edit3, Sparkles, Heart, 
   Repeat2, MessageCircle, Eye, Bookmark, Check, X,
-  ChevronDown, Wand2
+  ChevronDown, Wand2, BookOpen
 } from 'lucide-react';
-import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles } from '../api';
+import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles, generateBlogFromTweet } from '../api';
 
-function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit }) {
+function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBlog }) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(tweet.content);
+  const [blogLoading, setBlogLoading] = useState(false);
 
   const handleSave = () => {
     onEdit(tweet.id, editContent);
@@ -25,7 +26,7 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit }) {
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
                 className="input-field resize-none h-24"
-                maxLength={280}
+                maxLength={500}
               />
               <div className="flex items-center gap-2">
                 <button onClick={handleSave} className="btn-success text-sm py-1.5 px-3">
@@ -34,8 +35,8 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit }) {
                 <button onClick={() => setEditing(false)} className="btn-secondary text-sm py-1.5 px-3">
                   <X className="w-4 h-4" /> Cancel
                 </button>
-                <span className={`text-xs ${editContent.length > 280 ? 'text-red-400' : 'text-gray-500'}`}>
-                  {editContent.length}/280
+                <span className={`text-xs ${editContent.length > 500 ? 'text-red-400' : 'text-gray-500'}`}>
+                  {editContent.length}/500
                 </span>
               </div>
             </div>
@@ -54,7 +55,6 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit }) {
             <span>{new Date(tweet.created_at).toLocaleString()}</span>
           </div>
 
-          {/* Engagement metrics for posted tweets */}
           {tweet.status === 'posted' && (
             <div className="flex items-center gap-5 mt-3 text-sm text-gray-400">
               <span className="flex items-center gap-1.5"><Heart className="w-4 h-4 text-rose-400" /> {tweet.likes}</span>
@@ -62,6 +62,29 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit }) {
               <span className="flex items-center gap-1.5"><MessageCircle className="w-4 h-4 text-blue-400" /> {tweet.replies_count}</span>
               <span className="flex items-center gap-1.5"><Eye className="w-4 h-4 text-purple-400" /> {tweet.impressions}</span>
               <span className="flex items-center gap-1.5"><Bookmark className="w-4 h-4 text-amber-400" /> {tweet.bookmarks}</span>
+            </div>
+          )}
+
+          {tweet.article_id && (
+            <div className="mt-3">
+              <button
+                onClick={async () => {
+                  setBlogLoading(true);
+                  try {
+                    await onGenerateBlog(tweet.id);
+                  } finally {
+                    setBlogLoading(false);
+                  }
+                }}
+                disabled={blogLoading}
+                className="btn-secondary text-sm py-1.5 px-3"
+              >
+                {blogLoading ? (
+                  <><RefreshCw className="w-4 h-4 animate-spin" /> Generating Blog...</>
+                ) : (
+                  <><BookOpen className="w-4 h-4" /> Generate Blog Article</>
+                )}
+              </button>
             </div>
           )}
         </div>
@@ -169,6 +192,16 @@ export default function TweetsPage() {
     }
   };
 
+  const handleGenerateBlog = async (tweetId) => {
+    try {
+      const res = await generateBlogFromTweet(tweetId);
+      const created = res.data.created;
+      alert(`Blog articles generated!\n${created.map(c => `${c.language.toUpperCase()}: ${c.title} (${c.model})`).join('\n')}`);
+    } catch (err) {
+      alert('Failed to generate blog: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -260,6 +293,7 @@ export default function TweetsPage() {
               onRegenerate={handleRegenerate}
               onDelete={handleDelete}
               onEdit={handleEdit}
+              onGenerateBlog={handleGenerateBlog}
             />
           ))}
         </div>

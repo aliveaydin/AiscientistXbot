@@ -55,6 +55,7 @@ export const getBlogPosts = (language = null, limit = 50) => {
 export const getBlogPost = (id) => api.get(`/blog/${id}`);
 export const updateBlogStatus = (id, status) => api.put(`/blog/${id}/status`, { status });
 export const deleteBlogPost = (id) => api.delete(`/blog/${id}`);
+export const generateBlogFromTweet = (tweetDbId) => api.post(`/blog/generate-from-tweet/${tweetDbId}`);
 
 // Settings
 export const getSettings = () => api.get('/settings/');

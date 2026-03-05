@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models import BlogPost, Tweet, Article
+from app.services.ai_service import ai_service
 from typing import Optional
 
 router = APIRouter(prefix="/api/blog", tags=["Blog"])
@@ -104,6 +105,42 @@ async def update_blog_status(
     post.status = data.get("status", post.status)
     await db.commit()
     return {"success": True, "status": post.status}
+
+
+@router.post("/generate-from-tweet/{tweet_db_id}")
+async def generate_blog_from_tweet(tweet_db_id: int, db: AsyncSession = Depends(get_db)):
+    """Generate EN + TR blog articles from an existing tweet."""
+    result = await db.execute(select(Tweet).where(Tweet.id == tweet_db_id))
+    tweet = result.scalar_one_or_none()
+    if not tweet:
+        raise HTTPException(status_code=404, detail="Tweet not found")
+    if not tweet.article_id:
+        raise HTTPException(status_code=400, detail="Tweet has no linked source paper")
+
+    art_result = await db.execute(select(Article).where(Article.id == tweet.article_id))
+    article = art_result.scalar_one_or_none()
+    if not article:
+        raise HTTPException(status_code=404, detail="Source paper not found")
+
+    created = []
+    for lang in ["en", "tr"]:
+        blog_data = await ai_service.generate_blog_post(
+            article, tweet.content, language=lang, model=tweet.ai_model_used
+        )
+        post = BlogPost(
+            tweet_id=tweet.id,
+            article_id=article.id,
+            title=blog_data["title"],
+            content=blog_data["content"],
+            language=lang,
+            ai_model_used=blog_data.get("model", tweet.ai_model_used),
+            status="draft",
+        )
+        db.add(post)
+        created.append({"language": lang, "title": blog_data["title"], "model": blog_data.get("model", "?")})
+
+    await db.commit()
+    return {"success": True, "created": created}
 
 
 @router.delete("/{post_id}")
