@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "claude-sonnet-4-20250514")
 
+    # Kimi API (for blog generation)
+    kimi_api_key: str = os.getenv("KIMI_API_KEY", "")
+    kimi_base_url: str = os.getenv("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
+    kimi_model: str = os.getenv("KIMI_MODEL", "kimi-k2.5")
+
     # Bot Settings
     tweet_interval_minutes: int = int(os.getenv("TWEET_INTERVAL_MINUTES", "120"))
     auto_reply_enabled: bool = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"

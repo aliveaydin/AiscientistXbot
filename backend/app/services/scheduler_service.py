@@ -158,9 +158,9 @@ class SchedulerService:
                     db.add(log_tr)
                     await db.commit()
 
-                # Generate blog articles (EN + TR)
+                # Generate blog articles (EN + TR) using Kimi K2.5
                 try:
-                    logger.info("Generating blog articles...")
+                    logger.info("Generating blog articles with Kimi K2.5...")
                     en_blog = await ai_service.generate_blog_post(
                         article, tweet_content, language="en", model=model
                     )
@@ -170,7 +170,7 @@ class SchedulerService:
                         title=en_blog["title"],
                         content=en_blog["content"],
                         language="en",
-                        ai_model_used=model,
+                        ai_model_used=en_blog.get("model", model),
                         status="draft",
                     )
                     db.add(blog_en)
@@ -184,16 +184,16 @@ class SchedulerService:
                         title=tr_blog["title"],
                         content=tr_blog["content"],
                         language="tr",
-                        ai_model_used=model,
+                        ai_model_used=tr_blog.get("model", model),
                         status="draft",
                     )
                     db.add(blog_tr)
                     await db.commit()
 
-                    logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}', TR='{tr_blog['title'][:50]}'")
+                    logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}' ({en_blog.get('model', '?')}), TR='{tr_blog['title'][:50]}' ({tr_blog.get('model', '?')})")
                     log_blog = ActivityLog(
                         action="blog_generated",
-                        details=f"Blog articles created: {en_blog['title'][:80]}",
+                        details=f"Blog articles created with {en_blog.get('model', '?')}: {en_blog['title'][:80]}",
                         status="success",
                     )
                     db.add(log_blog)

@@ -149,6 +149,7 @@ class AIService:
     def __init__(self):
         self._openai_client = None
         self._anthropic_client = None
+        self._kimi_client = None
 
     @property
     def openai_client(self) -> AsyncOpenAI:
@@ -161,6 +162,15 @@ class AIService:
         if self._anthropic_client is None:
             self._anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         return self._anthropic_client
+
+    @property
+    def kimi_client(self) -> AsyncOpenAI:
+        if self._kimi_client is None:
+            self._kimi_client = AsyncOpenAI(
+                api_key=settings.kimi_api_key,
+                base_url=settings.kimi_base_url,
+            )
+        return self._kimi_client
 
     def _is_claude_model(self, model: str) -> bool:
         return "claude" in model.lower()
@@ -188,6 +198,19 @@ class AIService:
             temperature=0.8,
         )
         return response.content[0].text.strip()
+
+    async def _call_kimi(self, system_prompt: str, user_prompt: str) -> str:
+        """Call Kimi K2.5 API (OpenAI-compatible). Used for blog generation."""
+        response = await self.kimi_client.chat.completions.create(
+            model=settings.kimi_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=4000,
+            temperature=0.7,
+        )
+        return response.choices[0].message.content.strip()
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
         model = model or settings.default_ai_model
@@ -279,7 +302,10 @@ Your background knowledge on this topic:
         language: str = "en",
         model: Optional[str] = None,
     ) -> dict:
-        """Generate a blog article (EN or TR) based on the source article and the tweet."""
+        """Generate a blog article using Kimi K2.5. Falls back to default AI if Kimi fails."""
+        import logging
+        logger = logging.getLogger("ai_service")
+
         content = article.content[:8000] if len(article.content) > 8000 else article.content
 
         user_prompt = f"""Source paper/article title: {article.title or article.filename}
@@ -293,13 +319,25 @@ Related tweet that was posted:
 Write a detailed blog article analyzing this topic. The tweet above is a short summary you already posted; now write the full in-depth analysis. Reference the source paper by name. Include your own insights and inferences."""
 
         system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
-        result = await self._call_ai(system, user_prompt, model)
 
+        # Try Kimi K2.5 first (better long-form writing)
+        if settings.kimi_api_key:
+            try:
+                logger.info(f"Generating {language.upper()} blog with Kimi K2.5")
+                result = await self._call_kimi(system, user_prompt)
+                lines = result.strip().split("\n", 1)
+                title = lines[0].strip().lstrip("#").strip()
+                body = lines[1].strip() if len(lines) > 1 else result
+                return {"title": title, "content": body, "model": settings.kimi_model}
+            except Exception as e:
+                logger.warning(f"Kimi K2.5 failed, falling back to default: {e}")
+
+        # Fallback to default AI model
+        result = await self._call_ai(system, user_prompt, model)
         lines = result.strip().split("\n", 1)
         title = lines[0].strip().lstrip("#").strip()
         body = lines[1].strip() if len(lines) > 1 else result
-
-        return {"title": title, "content": body}
+        return {"title": title, "content": body, "model": model or settings.default_ai_model}
 
     async def summarize_article(self, article: Article, model: Optional[str] = None) -> list:
         """Summarize article into key insights."""
