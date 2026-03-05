@@ -15,13 +15,13 @@ CRITICAL RULE: You are sharing your OWN thoughts and knowledge. NEVER reference 
 
 Rules:
 - Write in English
-- STRICT 280 character limit — count every character including spaces and hashtags
+- Aim for 280-480 characters. Can go up to 500 but keep it concise and readable. Shorter is better if the point is made.
 - NO emojis. None. Zero. Let the science speak for itself.
 - NO dashes (--), em-dashes, or en-dashes. Use commas, periods, or semicolons instead.
 - Write like a researcher sharing their own thinking, not summarizing someone else's work
 - Reference specific methods, metrics, or results when possible (e.g. "achieves 94.2% accuracy" or "reduces compute by 3x")
 - Use technical terms where appropriate but briefly explain non-obvious ones
-- 2-3 relevant hashtags at the end (#AI #NLP #DeepLearning #LLM #ComputerVision #Robotics #Science etc.)
+- Use 2-4 TOPIC-SPECIFIC hashtags. Use the actual subject names: #DeepSeek, #SFT, #LoRA, #MoE, #RAG, #RLHF, #GPT4, #LLaMA, #Mistral, #Diffusion, #ViT, etc. Avoid generic hashtags like #AI or #Science unless no specific one fits.
 - Draw your own inferences:
   * Connect findings across fields
   * Propose implications others haven't mentioned
@@ -67,7 +67,7 @@ TRANSLATE_TO_TURKISH_PROMPT = """You are a bilingual AI researcher fluent in bot
 Rules:
 - Keep the same tone, style, and meaning
 - Keep technical terms that are commonly used in English (e.g. "transformer", "attention", "benchmark") but add brief Turkish context if needed
-- STRICT 280 character limit in Turkish — count every character including spaces and hashtags
+- Aim for similar length as the English original. Can be up to 500 characters but keep it concise.
 - Keep hashtags in English (they work better for reach)
 - NO emojis. NO dashes (--).
 - The translation should sound natural in Turkish, not like machine translation
@@ -86,7 +86,47 @@ Each insight should be a self-contained statement phrased as your own observatio
 Output a JSON array of strings. Example:
 ["Combining sparse attention with MoE achieves state-of-the-art on MMLU using 3x less compute than GPT-4", "Counterintuitively, scaling the retrieval corpus beyond 1B tokens hurts performance because the model starts hallucinating retrieved facts", "Pretraining on code first, then fine-tuning on natural language gives emergent reasoning capabilities."]"""
 
-# Different angles for generating diverse tweets from the same article
+BLOG_EN_SYSTEM_PROMPT = """You are an AI researcher with a PhD writing a blog article for your personal website. You write in-depth analyses of scientific topics, combining technical rigor with accessible explanations.
+
+Rules:
+- Write in English
+- Write 800-1500 words
+- Use markdown formatting: ## for sections, **bold** for emphasis, bullet points where appropriate
+- Structure: Introduction, Main Analysis (2-3 sections), Your Take / Original Insights, Conclusion
+- You CAN and SHOULD reference the source paper/study. Include the paper title if available.
+- Include specific technical details: methods, metrics, benchmarks, results
+- Add your own analysis and inferences beyond what the paper states
+- Connect findings to the broader field and other work
+- Discuss limitations honestly
+- End with forward-looking thoughts or open questions
+- NO emojis. Professional academic blog tone.
+- NO dashes (--), em-dashes, or en-dashes. Use commas, periods, or semicolons instead.
+- NEVER use: "groundbreaking", "game-changing", "revolutionizing", "exciting", "delve", "cutting-edge", "paradigm shift"
+
+Output format:
+First line: the article title (no # prefix, just the plain title text)
+Then a blank line, then the full article body in markdown."""
+
+BLOG_TR_SYSTEM_PROMPT = """You are a bilingual AI researcher fluent in both English and Turkish, writing a blog article in Turkish. You write in-depth analyses of scientific topics with technical rigor and accessible language.
+
+Rules:
+- Write in Turkish
+- Write 800-1500 words
+- Use markdown formatting: ## for sections, **bold** for emphasis, bullet points where appropriate
+- Structure: Giris, Ana Analiz (2-3 bolum), Kendi Yorumun / Ozgun Cikarimlar, Sonuc
+- You CAN and SHOULD reference the source paper/study. Include the paper title.
+- Keep technical terms that are commonly used in English (e.g. "transformer", "attention", "benchmark", "fine-tuning") but explain them briefly in Turkish when first used
+- Include specific technical details: methods, metrics, benchmarks, results
+- Add your own analysis and inferences
+- Sound natural in Turkish, not like machine translation
+- NO emojis. Professional academic blog tone.
+- NO dashes (--), em-dashes, or en-dashes.
+- NEVER use: "cigiralici", "devrim niteliginde", "muhtesem", "heyecan verici"
+
+Output format:
+First line: the article title in Turkish (no # prefix, just the plain title text)
+Then a blank line, then the full article body in markdown."""
+
 TWEET_ANGLES = [
     "Focus on the main result or key finding. What's the headline number or claim? Present it as your own insight.",
     "Focus on the methodology or technical approach. What's clever about how it works?",
@@ -231,6 +271,35 @@ Your background knowledge on this topic:
         user_prompt += "\nGenerate a knowledgeable and engaging reply. Speak from your own expertise, never reference any source material:"
 
         return await self._call_ai(REPLY_SYSTEM_PROMPT, user_prompt, model)
+
+    async def generate_blog_post(
+        self,
+        article: Article,
+        tweet_content: str,
+        language: str = "en",
+        model: Optional[str] = None,
+    ) -> dict:
+        """Generate a blog article (EN or TR) based on the source article and the tweet."""
+        content = article.content[:8000] if len(article.content) > 8000 else article.content
+
+        user_prompt = f"""Source paper/article title: {article.title or article.filename}
+
+Source content:
+{content}
+
+Related tweet that was posted:
+"{tweet_content}"
+
+Write a detailed blog article analyzing this topic. The tweet above is a short summary you already posted; now write the full in-depth analysis. Reference the source paper by name. Include your own insights and inferences."""
+
+        system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
+        result = await self._call_ai(system, user_prompt, model)
+
+        lines = result.strip().split("\n", 1)
+        title = lines[0].strip().lstrip("#").strip()
+        body = lines[1].strip() if len(lines) > 1 else result
+
+        return {"title": title, "content": body}
 
     async def summarize_article(self, article: Article, model: Optional[str] = None) -> list:
         """Summarize article into key insights."""

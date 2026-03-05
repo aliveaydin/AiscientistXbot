@@ -79,6 +79,24 @@ class ReplyResponse(BaseModel):
         from_attributes = True
 
 
+# --- Blog Post Schemas ---
+class BlogPostResponse(BaseModel):
+    id: int
+    tweet_id: Optional[int] = None
+    article_id: Optional[int] = None
+    title: str
+    content: str
+    language: str = "en"
+    ai_model_used: str
+    status: str
+    created_at: datetime
+    tweet_content: Optional[str] = None
+    article_title: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 # --- Settings Schemas ---
 class SettingsUpdate(BaseModel):
     default_ai_model: Optional[str] = None

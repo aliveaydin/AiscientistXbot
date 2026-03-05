@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { 
   LayoutDashboard, Send, FileText, MessageCircle, Settings, 
-  Bot, Menu, X, Zap
+  Bot, Menu, X, Zap, BookOpen
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import TweetsPage from './components/TweetsPage';
 import ArticlesPage from './components/ArticlesPage';
+import BlogPage from './components/BlogPage';
 import RepliesPage from './components/RepliesPage';
 import SettingsPage from './components/SettingsPage';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'tweets', label: 'Tweets', icon: Send },
-  { id: 'articles', label: 'Articles', icon: FileText },
+  { id: 'blog', label: 'Blog Articles', icon: BookOpen },
+  { id: 'articles', label: 'Source Papers', icon: FileText },
   { id: 'replies', label: 'Replies', icon: MessageCircle },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -25,6 +27,7 @@ export default function App() {
     switch (activePage) {
       case 'dashboard': return <Dashboard />;
       case 'tweets': return <TweetsPage />;
+      case 'blog': return <BlogPage />;
       case 'articles': return <ArticlesPage />;
       case 'replies': return <RepliesPage />;
       case 'settings': return <SettingsPage />;

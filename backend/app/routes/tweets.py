@@ -48,8 +48,8 @@ async def generate_tweet(
         article, model=request.ai_model, custom_prompt=request.custom_prompt
     )
 
-    if len(tweet_content) > 280:
-        tweet_content = tweet_content[:277] + "..."
+    if len(tweet_content) > 500:
+        tweet_content = tweet_content[:497] + "..."
 
     tweet = Tweet(
         content=tweet_content,
@@ -107,8 +107,8 @@ async def regenerate_tweet(
     model = ai_model or tweet.ai_model_used
 
     new_content = await ai_service.generate_tweet(article, model=model)
-    if len(new_content) > 280:
-        new_content = new_content[:277] + "..."
+    if len(new_content) > 500:
+        new_content = new_content[:497] + "..."
 
     tweet.content = new_content
     tweet.ai_model_used = model
@@ -265,8 +265,8 @@ async def translate_and_post_all_turkish(db: AsyncSession = Depends(get_db)):
             tr_content = await ai_service.translate_tweet_to_turkish(
                 en_tweet.content, model=en_tweet.ai_model_used
             )
-            if len(tr_content) > 280:
-                tr_content = tr_content[:277] + "..."
+            if len(tr_content) > 500:
+                tr_content = tr_content[:497] + "..."
 
             # Save TR tweet
             tr_tweet = Tweet(

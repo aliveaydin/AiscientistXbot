@@ -6,7 +6,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, func
 from app.database import async_session
-from app.models import Tweet, Reply, Article, ActivityLog, BotSettings
+from app.models import Tweet, Reply, Article, ActivityLog, BotSettings, BlogPost
 from app.services.ai_service import ai_service
 from app.services.twitter_service import twitter_service
 from app.services.article_service import ArticleService
@@ -70,9 +70,8 @@ class SchedulerService:
                     article, model=model, previous_tweets=previous_tweets
                 )
 
-                # Ensure tweet is within character limit
-                if len(tweet_content) > 280:
-                    tweet_content = tweet_content[:277] + "..."
+                if len(tweet_content) > 500:
+                    tweet_content = tweet_content[:497] + "..."
 
                 # Save EN tweet to DB as "queued"
                 tweet = Tweet(
@@ -115,8 +114,8 @@ class SchedulerService:
                     tr_content = await ai_service.translate_tweet_to_turkish(
                         tweet_content, model=model
                     )
-                    if len(tr_content) > 280:
-                        tr_content = tr_content[:277] + "..."
+                    if len(tr_content) > 500:
+                        tr_content = tr_content[:497] + "..."
 
                     tr_tweet = Tweet(
                         content=tr_content,
@@ -157,6 +156,56 @@ class SchedulerService:
                         status="error",
                     )
                     db.add(log_tr)
+                    await db.commit()
+
+                # Generate blog articles (EN + TR)
+                try:
+                    logger.info("Generating blog articles...")
+                    en_blog = await ai_service.generate_blog_post(
+                        article, tweet_content, language="en", model=model
+                    )
+                    blog_en = BlogPost(
+                        tweet_id=tweet.id,
+                        article_id=article.id,
+                        title=en_blog["title"],
+                        content=en_blog["content"],
+                        language="en",
+                        ai_model_used=model,
+                        status="draft",
+                    )
+                    db.add(blog_en)
+
+                    tr_blog = await ai_service.generate_blog_post(
+                        article, tweet_content, language="tr", model=model
+                    )
+                    blog_tr = BlogPost(
+                        tweet_id=tweet.id,
+                        article_id=article.id,
+                        title=tr_blog["title"],
+                        content=tr_blog["content"],
+                        language="tr",
+                        ai_model_used=model,
+                        status="draft",
+                    )
+                    db.add(blog_tr)
+                    await db.commit()
+
+                    logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}', TR='{tr_blog['title'][:50]}'")
+                    log_blog = ActivityLog(
+                        action="blog_generated",
+                        details=f"Blog articles created: {en_blog['title'][:80]}",
+                        status="success",
+                    )
+                    db.add(log_blog)
+                    await db.commit()
+                except Exception as blog_err:
+                    logger.error(f"Blog generation error: {blog_err}")
+                    log_blog = ActivityLog(
+                        action="blog_error",
+                        details=f"Failed to generate blog: {str(blog_err)[:200]}",
+                        status="error",
+                    )
+                    db.add(log_blog)
                     await db.commit()
 
                 logger.info("=== TWEET JOB FINISHED ===")
@@ -376,8 +425,8 @@ class SchedulerService:
                         model=model,
                     )
 
-                    if len(reply_text) > 280:
-                        reply_text = reply_text[:277] + "..."
+                    if len(reply_text) > 500:
+                        reply_text = reply_text[:497] + "..."
 
                     # Save reply to DB
                     reply = Reply(

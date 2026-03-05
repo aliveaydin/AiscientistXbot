@@ -63,6 +63,23 @@ class Reply(Base):
     tweet = relationship("Tweet", back_populates="replies")
 
 
+class BlogPost(Base):
+    __tablename__ = "blog_posts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    tweet_id = Column(Integer, ForeignKey("tweets.id"), nullable=True)
+    article_id = Column(Integer, ForeignKey("articles.id"), nullable=True)
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+    language = Column(String(10), default="en")
+    ai_model_used = Column(String(50), nullable=False)
+    status = Column(String(50), default="draft")  # draft, published
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    tweet = relationship("Tweet")
+    article = relationship("Article")
+
+
 class BotSettings(Base):
     __tablename__ = "bot_settings"
 

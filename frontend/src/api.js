@@ -45,6 +45,17 @@ export const summarizeArticle = (id, aiModel = null) => {
 };
 export const deleteArticle = (id) => api.delete(`/articles/${id}`);
 
+// Blog
+export const getBlogPosts = (language = null, limit = 50) => {
+  const params = new URLSearchParams();
+  if (language) params.append('language', language);
+  params.append('limit', limit);
+  return api.get(`/blog/?${params.toString()}`);
+};
+export const getBlogPost = (id) => api.get(`/blog/${id}`);
+export const updateBlogStatus = (id, status) => api.put(`/blog/${id}/status`, { status });
+export const deleteBlogPost = (id) => api.delete(`/blog/${id}`);
+
 // Settings
 export const getSettings = () => api.get('/settings/');
 export const updateSettings = (data) => api.put('/settings/', data);
