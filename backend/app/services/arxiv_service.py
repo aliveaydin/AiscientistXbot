@@ -44,7 +44,7 @@ class ArxivService:
     @staticmethod
     async def fetch_recent_papers(max_results: int = 50) -> List[dict]:
         """Fetch recent papers from ArXiv API."""
-        category_query = "+OR+".join(f"cat:{cat}" for cat in ARXIV_CATEGORIES)
+        category_query = " OR ".join(f"cat:{cat}" for cat in ARXIV_CATEGORIES)
         params = {
             "search_query": category_query,
             "sortBy": "submittedDate",
@@ -55,11 +55,15 @@ class ArxivService:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(ARXIV_API_URL, params=params)
             response.raise_for_status()
+        logger.info(f"ArXiv API response length: {len(response.text)} chars")
 
         ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
         root = ET.fromstring(response.text)
-        papers = []
 
+        total_results = root.find("{http://a9.com/-/spec/opensearch/1.1/}totalResults")
+        logger.info(f"ArXiv total results reported: {total_results.text if total_results is not None else 'unknown'}")
+
+        papers = []
         for entry in root.findall("atom:entry", ns):
             arxiv_id_url = entry.find("atom:id", ns).text
             arxiv_id = arxiv_id_url.split("/abs/")[-1]
