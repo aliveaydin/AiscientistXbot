@@ -13,7 +13,7 @@ from app.models import Article, ActivityLog
 
 logger = logging.getLogger("arxiv")
 
-ARXIV_API_URL = "http://export.arxiv.org/api/query"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
 
 ARXIV_CATEGORIES = [
     "cs.AI",   # Artificial Intelligence
@@ -52,7 +52,7 @@ class ArxivService:
             "max_results": max_results,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             response = await client.get(ARXIV_API_URL, params=params)
             response.raise_for_status()
 
