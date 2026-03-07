@@ -5,6 +5,7 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session
 from app.models import Tweet, Reply, Article, ActivityLog, BotSettings, BlogPost
 from app.services.ai_service import ai_service
