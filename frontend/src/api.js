@@ -39,6 +39,7 @@ export const uploadArticle = (file) => {
   });
 };
 export const scanArticles = () => api.post('/articles/scan');
+export const fetchArxiv = () => api.post('/articles/fetch-arxiv');
 export const summarizeArticle = (id, aiModel = null) => {
   const params = aiModel ? `?ai_model=${aiModel}` : '';
   return api.post(`/articles/${id}/summarize${params}`);

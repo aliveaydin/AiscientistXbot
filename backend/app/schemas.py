@@ -29,6 +29,10 @@ class ArticleListResponse(BaseModel):
     added_at: datetime
     is_processed: bool
     tweet_count: int = 0
+    source: str = "manual"
+    arxiv_id: Optional[str] = None
+    arxiv_url: Optional[str] = None
+    relevance_score: Optional[float] = None
 
     class Config:
         from_attributes = True

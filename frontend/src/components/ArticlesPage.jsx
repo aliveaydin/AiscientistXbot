@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileText, Upload, FolderSearch, Trash2, Sparkles, 
-  ChevronDown, ChevronUp, BookOpen, Hash
+  ChevronDown, ChevronUp, BookOpen, Hash, RefreshCw,
+  ExternalLink, Star, Globe
 } from 'lucide-react';
-import { getArticles, uploadArticle, scanArticles, summarizeArticle, deleteArticle } from '../api';
+import { getArticles, uploadArticle, scanArticles, summarizeArticle, deleteArticle, fetchArxiv } from '../api';
 
 export default function ArticlesPage() {
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [fetchingArxiv, setFetchingArxiv] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [summaries, setSummaries] = useState({});
   const fileInputRef = useRef(null);
@@ -57,6 +59,24 @@ export default function ArticlesPage() {
       alert('Scan failed: ' + (err.response?.data?.detail || err.message));
     } finally {
       setScanning(false);
+    }
+  };
+
+  const handleFetchArxiv = async () => {
+    setFetchingArxiv(true);
+    try {
+      const res = await fetchArxiv();
+      const papers = res.data.papers || [];
+      if (papers.length > 0) {
+        alert(`Imported ${papers.length} papers from ArXiv:\n${papers.map(p => `${p.title.substring(0, 60)}... (score: ${p.score})`).join('\n')}`);
+      } else {
+        alert('No new papers found on ArXiv (all recent ones already imported).');
+      }
+      await loadArticles();
+    } catch (err) {
+      alert('ArXiv fetch failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setFetchingArxiv(false);
     }
   };
 
@@ -119,13 +139,25 @@ export default function ArticlesPage() {
           <FolderSearch className="w-4 h-4" />
           {scanning ? 'Scanning...' : 'Scan Directory'}
         </button>
-        <span className="text-sm text-gray-500 ml-auto">{articles.length} articles</span>
+        <button onClick={handleFetchArxiv} disabled={fetchingArxiv} className="btn-secondary">
+          {fetchingArxiv ? (
+            <><RefreshCw className="w-4 h-4 animate-spin" /> Fetching ArXiv...</>
+          ) : (
+            <><Globe className="w-4 h-4" /> Fetch ArXiv Papers</>
+          )}
+        </button>
+        <span className="text-sm text-gray-500 ml-auto">
+          {articles.length} articles ({articles.filter(a => a.source === 'arxiv').length} from ArXiv)
+        </span>
       </div>
 
       {/* Info Box */}
-      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 space-y-2">
         <p className="text-sm text-blue-300">
-          <strong>Tip:</strong> Place article files (PDF, TXT, MD, DOCX) in the <code className="bg-blue-500/20 px-1.5 py-0.5 rounded">articles/</code> folder and click "Scan Directory" to import them automatically.
+          <strong>Manual:</strong> Upload article files (PDF, TXT, MD, DOCX) or place them in the <code className="bg-blue-500/20 px-1.5 py-0.5 rounded">articles/</code> folder and click "Scan Directory".
+        </p>
+        <p className="text-sm text-orange-300">
+          <strong>ArXiv Auto-Fetch:</strong> Click "Fetch ArXiv Papers" to grab the latest AI/ML papers, or let the bot fetch them automatically every 12 hours. Papers are scored by AI for relevance; only the best ones are imported.
         </p>
       </div>
 
@@ -144,16 +176,27 @@ export default function ArticlesPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-white font-medium truncate">{article.title || article.filename}</h4>
-                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 flex-wrap">
+                    {article.source === 'arxiv' ? (
+                      <span className="bg-orange-500/20 text-orange-400 px-1.5 py-0.5 rounded font-medium">ArXiv</span>
+                    ) : (
+                      <span className="bg-gray-700/50 text-gray-400 px-1.5 py-0.5 rounded">Manual</span>
+                    )}
                     <span className="uppercase font-mono">{article.file_type}</span>
                     <span>{new Date(article.added_at).toLocaleDateString()}</span>
                     <span className="flex items-center gap-1">
                       <Hash className="w-3 h-3" /> {article.tweet_count} tweets
                     </span>
-                    {article.is_processed ? (
-                      <span className="badge-success">Processed</span>
-                    ) : (
-                      <span className="badge-warning">Pending</span>
+                    {article.relevance_score && (
+                      <span className="flex items-center gap-1 text-yellow-400">
+                        <Star className="w-3 h-3" /> {article.relevance_score.toFixed(1)}
+                      </span>
+                    )}
+                    {article.arxiv_url && (
+                      <a href={article.arxiv_url} target="_blank" rel="noopener noreferrer"
+                         className="flex items-center gap-1 text-blue-400 hover:text-blue-300">
+                        <ExternalLink className="w-3 h-3" /> ArXiv
+                      </a>
                     )}
                   </div>
                 </div>

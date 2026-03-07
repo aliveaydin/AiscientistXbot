@@ -10,6 +10,7 @@ from app.models import Tweet, Reply, Article, ActivityLog, BotSettings, BlogPost
 from app.services.ai_service import ai_service
 from app.services.twitter_service import twitter_service
 from app.services.article_service import ArticleService
+from app.services.arxiv_service import arxiv_service
 from app.config import settings
 
 logger = logging.getLogger("scheduler")
@@ -485,6 +486,25 @@ class SchedulerService:
                 db.add(log)
                 await db.commit()
 
+    async def fetch_arxiv_papers(self):
+        """Fetch new papers from ArXiv, score them, and import top ones."""
+        logger.info("=== ARXIV FETCH JOB STARTED ===")
+        async with async_session() as db:
+            try:
+                imported = await arxiv_service.fetch_and_import(
+                    db, max_papers=3, min_score=6.0
+                )
+                logger.info(f"ArXiv fetch complete: {len(imported)} papers imported")
+            except Exception as e:
+                logger.error(f"ARXIV JOB ERROR: {e}", exc_info=True)
+                log = ActivityLog(
+                    action="arxiv_fetch_error",
+                    details=f"Error fetching ArXiv papers: {str(e)[:200]}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
     async def update_metrics_job(self):
         """Periodically update tweet engagement metrics using batch API."""
         logger.info("--- METRICS JOB running ---")
@@ -546,6 +566,15 @@ class SchedulerService:
             replace_existing=True,
         )
 
+        # ArXiv paper fetch (every 12 hours = twice daily)
+        self.scheduler.add_job(
+            self.fetch_arxiv_papers,
+            IntervalTrigger(hours=12),
+            id="arxiv_job",
+            name="ArXiv Paper Fetcher",
+            replace_existing=True,
+        )
+
         self.scheduler.start()
         self.is_running = True
 
@@ -554,7 +583,7 @@ class SchedulerService:
             logger.info(f"  Job: {job.id} -> next run: {job.next_run_time}")
 
     async def run_initial_jobs(self):
-        """Run metrics and retry immediately after startup."""
+        """Run metrics, retry, and arxiv fetch immediately after startup."""
         logger.info("Running initial jobs after startup...")
         try:
             await self.update_metrics_job()
@@ -564,6 +593,10 @@ class SchedulerService:
             await self.retry_queued_tweets()
         except Exception as e:
             logger.error(f"Initial retry job error: {e}")
+        try:
+            await self.fetch_arxiv_papers()
+        except Exception as e:
+            logger.error(f"Initial ArXiv fetch error: {e}")
 
     def stop(self):
         """Stop the scheduler."""

@@ -15,6 +15,11 @@ class Article(Base):
     file_type = Column(String(50), nullable=False)
     added_at = Column(DateTime, default=datetime.utcnow)
     is_processed = Column(Boolean, default=False)
+    source = Column(String(50), default="manual")  # manual, arxiv
+    arxiv_id = Column(String(100), nullable=True, unique=True)
+    arxiv_url = Column(String(500), nullable=True)
+    arxiv_categories = Column(String(500), nullable=True)
+    relevance_score = Column(Float, nullable=True)
 
     tweets = relationship("Tweet", back_populates="article")
 

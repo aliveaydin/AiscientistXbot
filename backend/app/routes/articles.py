@@ -37,6 +37,10 @@ async def get_articles(db: AsyncSession = Depends(get_db)):
                 added_at=article.added_at,
                 is_processed=article.is_processed,
                 tweet_count=tweet_count,
+                source=article.source or "manual",
+                arxiv_id=article.arxiv_id,
+                arxiv_url=article.arxiv_url,
+                relevance_score=article.relevance_score,
             )
         )
     return articles
@@ -99,6 +103,25 @@ async def summarize_article(
     await db.commit()
 
     return {"insights": insights, "summary": article.summary}
+
+
+@router.post("/fetch-arxiv")
+async def fetch_arxiv(db: AsyncSession = Depends(get_db)):
+    """Manually trigger ArXiv paper fetch."""
+    from app.services.arxiv_service import arxiv_service
+    imported = await arxiv_service.fetch_and_import(db, max_papers=3, min_score=6.0)
+    return {
+        "message": f"Fetched and imported {len(imported)} papers from ArXiv",
+        "papers": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "arxiv_id": a.arxiv_id,
+                "score": a.relevance_score,
+            }
+            for a in imported
+        ],
+    }
 
 
 @router.delete("/{article_id}")
