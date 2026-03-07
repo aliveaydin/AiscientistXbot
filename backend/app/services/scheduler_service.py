@@ -418,7 +418,13 @@ class SchedulerService:
 
                 model = await self._get_ai_model()
 
+                our_user_id = twitter_service._cached_user_id or twitter_service._get_user_id_api()
+
                 for mention in mentions:
+                    # Skip our own tweets/replies (don't like or reply to ourselves)
+                    if mention.get("author_id") == our_user_id:
+                        continue
+
                     # Skip if we already replied to this mention
                     existing = await db.execute(
                         select(Reply).where(Reply.incoming_reply_id == mention["id"])
@@ -426,12 +432,12 @@ class SchedulerService:
                     if existing.scalar_one_or_none():
                         continue
 
-                    # Like the incoming reply first
+                    # Like the incoming reply
                     like_result = await twitter_service.like_tweet(mention["id"])
                     if like_result["success"]:
-                        print(f"[Bot] Liked reply from @{mention.get('author_username', '?')}")
+                        logger.info(f"Liked reply from @{mention.get('author_username', '?')}")
                     else:
-                        print(f"[Bot] Could not like reply: {like_result.get('error', '')[:100]}")
+                        logger.warning(f"Could not like reply: {like_result.get('error', '')[:100]}")
 
                     # Find conversation context (works for both direct replies and chain replies)
                     context = await self._find_conversation_context(mention, db)
