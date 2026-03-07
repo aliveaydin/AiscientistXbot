@@ -175,6 +175,9 @@ class AIService:
     def _is_claude_model(self, model: str) -> bool:
         return "claude" in model.lower()
 
+    def _is_kimi_model(self, model: str) -> bool:
+        return "kimi" in model.lower()
+
     async def _call_openai(self, system_prompt: str, user_prompt: str, model: str = "gpt-4") -> str:
         response = await self.openai_client.chat.completions.create(
             model=model,
@@ -200,7 +203,7 @@ class AIService:
         return response.content[0].text.strip()
 
     async def _call_kimi(self, system_prompt: str, user_prompt: str) -> str:
-        """Call Kimi K2.5 API (OpenAI-compatible). Used for blog generation."""
+        """Call Kimi K2.5 API (OpenAI-compatible)."""
         response = await self.kimi_client.chat.completions.create(
             model=settings.kimi_model,
             messages=[
@@ -212,8 +215,11 @@ class AIService:
         return response.choices[0].message.content.strip()
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
+        """Route to the right AI provider. Kimi is primary, Claude/OpenAI are fallbacks."""
         model = model or settings.default_ai_model
-        if self._is_claude_model(model):
+        if self._is_kimi_model(model):
+            return await self._call_kimi(system_prompt, user_prompt)
+        elif self._is_claude_model(model):
             return await self._call_claude(system_prompt, user_prompt, model)
         else:
             return await self._call_openai(system_prompt, user_prompt, model)

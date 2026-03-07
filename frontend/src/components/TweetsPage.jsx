@@ -118,7 +118,7 @@ export default function TweetsPage() {
   const [generating, setGenerating] = useState(false);
   const [filter, setFilter] = useState('');
   const [selectedArticle, setSelectedArticle] = useState('');
-  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-20250514');
+  const [selectedModel, setSelectedModel] = useState('kimi-k2.5');
 
   useEffect(() => {
     loadData();
@@ -232,15 +232,17 @@ export default function TweetsPage() {
             onChange={(e) => setSelectedModel(e.target.value)}
             className="select-field"
           >
-            <optgroup label="Anthropic (Recommended)">
-              <option value="claude-sonnet-4-20250514">Claude Sonnet 4 ⭐</option>
+            <optgroup label="Kimi (Primary)">
+              <option value="kimi-k2.5">Kimi K2.5 ⭐</option>
+            </optgroup>
+            <optgroup label="Anthropic (Fallback)">
+              <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
               <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku (Fast)</option>
               <option value="claude-3-opus-20240229">Claude 3 Opus</option>
             </optgroup>
-            <optgroup label="OpenAI">
+            <optgroup label="OpenAI (Fallback)">
               <option value="gpt-4o">GPT-4o</option>
               <option value="gpt-4o-mini">GPT-4o Mini (Cheap)</option>
-              <option value="gpt-4-turbo">GPT-4 Turbo</option>
               <option value="gpt-4">GPT-4</option>
             </optgroup>
           </select>
