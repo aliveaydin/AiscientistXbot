@@ -44,7 +44,7 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
             <p className="text-white leading-relaxed">{tweet.content}</p>
           )}
 
-          <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+          <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 flex-wrap">
             <span className="badge-info">{tweet.ai_model_used}</span>
             <span className={
               tweet.status === 'posted' ? 'badge-success' :
@@ -52,6 +52,11 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
             }>
               {tweet.status}
             </span>
+            {tweet.is_thread && (
+              <span className="bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded text-xs font-medium">
+                Thread {tweet.thread_order !== null && tweet.thread_order !== undefined ? `${tweet.thread_order + 1}` : ''}
+              </span>
+            )}
             <span>{new Date(tweet.created_at).toLocaleString()}</span>
           </div>
 
@@ -288,15 +293,20 @@ export default function TweetsPage() {
       ) : tweets.length > 0 ? (
         <div className="space-y-4">
           {tweets.map((tweet) => (
-            <TweetCard
-              key={tweet.id}
-              tweet={tweet}
-              onPost={handlePost}
-              onRegenerate={handleRegenerate}
-              onDelete={handleDelete}
-              onEdit={handleEdit}
-              onGenerateBlog={handleGenerateBlog}
-            />
+            <div key={tweet.id} className={
+              tweet.is_thread && tweet.thread_order > 0
+                ? 'ml-6 border-l-2 border-purple-500/30 pl-4'
+                : ''
+            }>
+              <TweetCard
+                tweet={tweet}
+                onPost={handlePost}
+                onRegenerate={handleRegenerate}
+                onDelete={handleDelete}
+                onEdit={handleEdit}
+                onGenerateBlog={handleGenerateBlog}
+              />
+            </div>
           ))}
         </div>
       ) : (

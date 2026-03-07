@@ -144,6 +144,35 @@ TWEET_ANGLES = [
     "Extract a general principle or heuristic that could apply beyond this specific domain.",
 ]
 
+THREAD_SYSTEM_PROMPT = """You are an AI researcher with a PhD, writing a Twitter/X thread. You go deeper than a single tweet, building an argument across 2-3 connected tweets.
+
+CRITICAL RULE: You are sharing your OWN thoughts and knowledge. NEVER reference any paper, study, or article. Speak as the expert.
+
+Rules:
+- Write in English
+- Write exactly 2 or 3 tweets (choose based on topic complexity)
+- Each tweet: 200-480 characters. Can go up to 500 but keep it readable.
+- NO emojis. NO dashes (--), em-dashes, or en-dashes.
+- Only the LAST tweet gets exactly 1 TOPIC-SPECIFIC hashtag.
+- Do NOT number the tweets (no "1/3" or "Thread:" prefixes). Each tweet should read naturally on its own while building on the previous.
+
+Thread structure:
+- Tweet 1 (Hook): A bold claim, surprising observation, or provocative question that makes people want to read more.
+- Tweet 2 (Depth): Technical evidence, mechanism, or analysis that supports the hook. Be specific with numbers/methods.
+- Tweet 3 (Payoff, optional): Your original inference, prediction, or the "so what" implication. End with a thought-provoking statement.
+
+NEVER use: "groundbreaking", "game-changing", "revolutionizing", "exciting", "delve", "cutting-edge", "paradigm shift", "fascinating", "remarkable"
+NEVER use: "a new paper", "a new study", "researchers found", "this article", "recent research"
+
+Output format: Write each tweet separated by exactly "---" on its own line. Nothing else.
+
+Example output:
+Most people think scaling data is the key to better LLMs. But what if the real bottleneck is data quality, not quantity? Filtering 90% of Common Crawl and training on the remaining 10% consistently beats training on everything.
+---
+The mechanism is straightforward: noisy data doesn't just add nothing, it actively degrades learned representations. Models trained on curated 10% subsets show 15% higher accuracy on reasoning benchmarks and 3x fewer hallucinations on TruthfulQA.
+---
+If this holds at larger scales, the implication is clear: we don't need more GPUs, we need better data pipelines. The next frontier isn't petascale compute; it's petascale curation. #DataQuality"""
+
 
 class AIService:
     def __init__(self):
@@ -260,6 +289,45 @@ IMPORTANT: The following tweets were already posted on this topic. Write somethi
         system = TWEET_SYSTEM_PROMPT
 
         return await self._call_ai(system, user_prompt, model)
+
+    async def generate_thread(
+        self,
+        article: Article,
+        model: Optional[str] = None,
+        previous_tweets: Optional[List[str]] = None,
+    ) -> List[str]:
+        """Generate a 2-3 tweet thread from an article."""
+        content = article.content[:4000] if len(article.content) > 4000 else article.content
+        angle = random.choice(TWEET_ANGLES)
+
+        user_prompt = f"""Topic: {article.title or article.filename}
+
+Reference material:
+{content}
+
+Angle: {angle}
+
+Using the reference material above as your knowledge base, write a thread (2-3 tweets) sharing a deeper analysis on this topic. Do NOT mention or reference any paper, study, article, or external source. Speak as the expert."""
+
+        if previous_tweets:
+            tweets_str = "\n".join(f"- {t}" for t in previous_tweets[-5:])
+            user_prompt += f"""
+
+IMPORTANT: The following tweets were already posted on this topic. Write something COMPLETELY DIFFERENT:
+{tweets_str}"""
+
+        result = await self._call_ai(THREAD_SYSTEM_PROMPT, user_prompt, model)
+
+        tweets = [t.strip() for t in result.split("---") if t.strip()]
+
+        if len(tweets) < 2:
+            tweets = [t.strip() for t in result.split("\n\n") if t.strip()]
+
+        for i, tweet in enumerate(tweets):
+            if len(tweet) > 500:
+                tweets[i] = tweet[:497] + "..."
+
+        return tweets[:3]
 
     async def translate_tweet_to_turkish(
         self,

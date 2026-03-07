@@ -54,6 +54,9 @@ class TweetResponse(BaseModel):
     status: str
     language: str = "en"
     parent_tweet_db_id: Optional[int] = None
+    is_thread: bool = False
+    thread_order: Optional[int] = None
+    thread_id: Optional[int] = None
     posted_at: Optional[datetime] = None
     created_at: datetime
     likes: int = 0

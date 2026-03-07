@@ -36,6 +36,9 @@ class Tweet(Base):
     retry_count = Column(Integer, default=0)
     language = Column(String(10), default="en")  # en, tr
     parent_tweet_db_id = Column(Integer, nullable=True)  # links TR tweet to its EN original
+    is_thread = Column(Boolean, default=False)
+    thread_order = Column(Integer, nullable=True)  # 0, 1, 2 for tweets in a thread
+    thread_id = Column(Integer, nullable=True)  # DB id of the first tweet in the thread
     posted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -35,190 +35,229 @@ class SchedulerService:
     async def _get_ai_model(self) -> str:
         return await self._get_setting("default_ai_model", settings.default_ai_model)
 
+    async def _should_post_thread(self, db: AsyncSession) -> bool:
+        """Alternate: if the last posted tweet was normal, next should be a thread and vice versa."""
+        result = await db.execute(
+            select(Tweet.is_thread)
+            .where(Tweet.status == "posted", Tweet.language == "en", Tweet.thread_order.is_(None) | (Tweet.thread_order == 0))
+            .order_by(Tweet.posted_at.desc())
+            .limit(1)
+        )
+        row = result.first()
+        if row is None:
+            return False
+        last_was_thread = row[0] if row[0] else False
+        return not last_was_thread
+
+    async def _post_single_tweet(self, article, model, previous_tweets, db):
+        """Generate and post a single EN tweet + TR translation."""
+        tweet_content = await ai_service.generate_tweet(
+            article, model=model, previous_tweets=previous_tweets
+        )
+        if len(tweet_content) > 500:
+            tweet_content = tweet_content[:497] + "..."
+
+        tweet = Tweet(
+            content=tweet_content, article_id=article.id, ai_model_used=model,
+            status="queued", language="en",
+        )
+        db.add(tweet)
+        await db.commit()
+        await db.refresh(tweet)
+
+        logger.info(f"Generated EN tweet ({len(tweet_content)} chars): {tweet_content[:80]}...")
+
+        post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
+        if post_result["success"]:
+            logger.info(f"EN tweet posted: {post_result.get('tweet_id', '?')}")
+            db.add(ActivityLog(action="auto_tweet_posted", details=f"[EN] Posted: {tweet_content[:100]}...", status="success"))
+        else:
+            logger.warning(f"EN tweet failed: {post_result.get('error', '')[:100]}")
+            db.add(ActivityLog(action="tweet_retry_pending", details=f"[EN] Queued: {post_result.get('error', '')[:150]}", status="warning"))
+            await db.refresh(tweet)
+            if tweet.status == "failed":
+                tweet.status = "queued"
+        await db.commit()
+
+        # TR translation
+        try:
+            tr_content = await ai_service.translate_tweet_to_turkish(tweet_content, model=model)
+            if len(tr_content) > 500:
+                tr_content = tr_content[:497] + "..."
+            tr_tweet = Tweet(
+                content=tr_content, article_id=article.id, ai_model_used=model,
+                status="queued", language="tr", parent_tweet_db_id=tweet.id,
+            )
+            db.add(tr_tweet)
+            await db.commit()
+            await db.refresh(tr_tweet)
+            tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
+            if tr_result["success"]:
+                db.add(ActivityLog(action="auto_tweet_posted", details=f"[TR] Posted: {tr_content[:100]}...", status="success"))
+            else:
+                db.add(ActivityLog(action="tweet_retry_pending", details=f"[TR] Queued: {tr_result.get('error', '')[:150]}", status="warning"))
+                await db.refresh(tr_tweet)
+                if tr_tweet.status == "failed":
+                    tr_tweet.status = "queued"
+            await db.commit()
+        except Exception as tr_err:
+            logger.error(f"TR tweet error: {tr_err}")
+            db.add(ActivityLog(action="tr_tweet_error", details=f"TR tweet failed: {str(tr_err)[:200]}", status="error"))
+            await db.commit()
+
+        return tweet, tweet_content
+
+    async def _post_thread(self, article, model, previous_tweets, db):
+        """Generate and post a 2-3 tweet thread as a reply chain."""
+        thread_parts = await ai_service.generate_thread(
+            article, model=model, previous_tweets=previous_tweets
+        )
+        logger.info(f"Generated thread with {len(thread_parts)} parts")
+
+        thread_tweets = []
+        last_twitter_id = None
+
+        for i, part in enumerate(thread_parts):
+            tweet = Tweet(
+                content=part, article_id=article.id, ai_model_used=model,
+                status="queued", language="en", is_thread=True, thread_order=i,
+            )
+            db.add(tweet)
+            await db.commit()
+            await db.refresh(tweet)
+
+            if last_twitter_id is None:
+                post_result = await twitter_service.post_tweet(part, db, tweet.id)
+            else:
+                loop = asyncio.get_event_loop()
+                api_result = await loop.run_in_executor(
+                    None, lambda tid=last_twitter_id: twitter_service._post_tweet_api(part, reply_to_id=tid)
+                )
+                if api_result["success"]:
+                    tweet.tweet_id = api_result["tweet_id"]
+                    tweet.status = "posted"
+                    tweet.posted_at = datetime.utcnow()
+                    await db.commit()
+                    post_result = api_result
+                else:
+                    tweet.status = "failed"
+                    await db.commit()
+                    post_result = api_result
+
+            if post_result.get("success"):
+                last_twitter_id = post_result.get("tweet_id") or tweet.tweet_id
+                logger.info(f"Thread {i+1}/{len(thread_parts)} posted: {part[:60]}...")
+            else:
+                logger.warning(f"Thread {i+1}/{len(thread_parts)} failed: {post_result.get('error', '')[:100]}")
+                break
+
+            thread_tweets.append(tweet)
+
+        # Set thread_id on all tweets to the first tweet's DB id
+        if thread_tweets:
+            first_id = thread_tweets[0].id
+            for t in thread_tweets:
+                t.thread_id = first_id
+            await db.commit()
+            db.add(ActivityLog(
+                action="thread_posted",
+                details=f"[EN Thread] {len(thread_tweets)} tweets posted for: {article.title[:60]}",
+                status="success",
+            ))
+            await db.commit()
+
+        # TR translations for each thread part
+        try:
+            for i, en_tweet in enumerate(thread_tweets):
+                tr_content = await ai_service.translate_tweet_to_turkish(en_tweet.content, model=model)
+                if len(tr_content) > 500:
+                    tr_content = tr_content[:497] + "..."
+                tr_tweet = Tweet(
+                    content=tr_content, article_id=article.id, ai_model_used=model,
+                    status="queued", language="tr", parent_tweet_db_id=en_tweet.id,
+                    is_thread=True, thread_order=i, thread_id=thread_tweets[0].id if thread_tweets else None,
+                )
+                db.add(tr_tweet)
+                await db.commit()
+                await db.refresh(tr_tweet)
+                tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
+                if not tr_result["success"]:
+                    await db.refresh(tr_tweet)
+                    if tr_tweet.status == "failed":
+                        tr_tweet.status = "queued"
+                    await db.commit()
+        except Exception as tr_err:
+            logger.error(f"TR thread error: {tr_err}")
+            db.add(ActivityLog(action="tr_tweet_error", details=f"TR thread failed: {str(tr_err)[:200]}", status="error"))
+            await db.commit()
+
+        first_tweet = thread_tweets[0] if thread_tweets else None
+        first_content = thread_parts[0] if thread_parts else ""
+        return first_tweet, first_content
+
     async def generate_and_post_tweet(self):
-        """Main job: Pick an article intelligently, generate a unique tweet, and post it."""
+        """Main job: Pick an article, decide normal vs thread, generate and post."""
         logger.info("=== TWEET JOB STARTED ===")
         async with async_session() as db:
             try:
                 await ArticleService.scan_and_import_articles(db)
 
                 article = await ArticleService.get_least_tweeted_article(db)
-
                 if not article:
                     logger.warning("No articles available for tweet generation")
-                    log = ActivityLog(
-                        action="tweet_skipped",
-                        details="No articles available for tweet generation",
-                        status="warning",
-                    )
-                    db.add(log)
+                    db.add(ActivityLog(action="tweet_skipped", details="No articles available", status="warning"))
                     await db.commit()
                     return
 
                 logger.info(f"Selected article: #{article.id} - {article.title[:60]}")
 
-                # Get previous tweets about this article to avoid repetition
                 prev_result = await db.execute(
                     select(Tweet.content).where(Tweet.article_id == article.id)
                 )
                 previous_tweets = [row[0] for row in prev_result.fetchall()]
-
-                # Get AI model
                 model = await self._get_ai_model()
 
-                # Generate tweet with awareness of previous tweets
-                tweet_content = await ai_service.generate_tweet(
-                    article, model=model, previous_tweets=previous_tweets
-                )
+                use_thread = await self._should_post_thread(db)
+                logger.info(f"Mode: {'THREAD' if use_thread else 'SINGLE'}")
 
-                if len(tweet_content) > 500:
-                    tweet_content = tweet_content[:497] + "..."
-
-                # Save EN tweet to DB as "queued"
-                tweet = Tweet(
-                    content=tweet_content,
-                    article_id=article.id,
-                    ai_model_used=model,
-                    status="queued",
-                    language="en",
-                )
-                db.add(tweet)
-                await db.commit()
-                await db.refresh(tweet)
-
-                logger.info(f"Generated EN tweet ({len(tweet_content)} chars): {tweet_content[:80]}...")
-
-                post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
-                en_posted = post_result["success"]
-
-                if en_posted:
-                    logger.info(f"EN tweet posted successfully: {post_result.get('tweet_id', '?')}")
-                    log = ActivityLog(
-                        action="auto_tweet_posted",
-                        details=f"[EN] Posted: {tweet_content[:100]}...",
-                        status="success",
-                    )
+                if use_thread:
+                    tweet, tweet_content = await self._post_thread(article, model, previous_tweets, db)
                 else:
-                    logger.warning(f"EN tweet failed, will retry: {post_result.get('error', '')[:100]}")
-                    log = ActivityLog(
-                        action="tweet_retry_pending",
-                        details=f"[EN] Queued for retry: {post_result.get('error', '')[:150]}",
-                        status="warning",
-                    )
-                    await db.refresh(tweet)
-                    if tweet.status == "failed":
-                        tweet.status = "queued"
-                db.add(log)
-                await db.commit()
+                    tweet, tweet_content = await self._post_single_tweet(article, model, previous_tweets, db)
 
-                try:
-                    tr_content = await ai_service.translate_tweet_to_turkish(
-                        tweet_content, model=model
-                    )
-                    if len(tr_content) > 500:
-                        tr_content = tr_content[:497] + "..."
-
-                    tr_tweet = Tweet(
-                        content=tr_content,
-                        article_id=article.id,
-                        ai_model_used=model,
-                        status="queued",
-                        language="tr",
-                        parent_tweet_db_id=tweet.id,
-                    )
-                    db.add(tr_tweet)
-                    await db.commit()
-                    await db.refresh(tr_tweet)
-
-                    # Post TR tweet
-                    tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
-                    if tr_result["success"]:
-                        log_tr = ActivityLog(
-                            action="auto_tweet_posted",
-                            details=f"[TR] Posted: {tr_content[:100]}...",
-                            status="success",
+                # Generate blog articles
+                if tweet:
+                    try:
+                        logger.info("Generating blog articles...")
+                        en_blog = await ai_service.generate_blog_post(article, tweet_content, language="en", model=model)
+                        blog_en = BlogPost(
+                            tweet_id=tweet.id, article_id=article.id,
+                            title=en_blog["title"], content=en_blog["content"],
+                            language="en", ai_model_used=en_blog.get("model", model), status="draft",
                         )
-                    else:
-                        log_tr = ActivityLog(
-                            action="tweet_retry_pending",
-                            details=f"[TR] Queued for retry: {tr_result.get('error', '')[:150]}",
-                            status="warning",
+                        db.add(blog_en)
+
+                        tr_blog = await ai_service.generate_blog_post(article, tweet_content, language="tr", model=model)
+                        blog_tr = BlogPost(
+                            tweet_id=tweet.id, article_id=article.id,
+                            title=tr_blog["title"], content=tr_blog["content"],
+                            language="tr", ai_model_used=tr_blog.get("model", model), status="draft",
                         )
-                        await db.refresh(tr_tweet)
-                        if tr_tweet.status == "failed":
-                            tr_tweet.status = "queued"
-                    db.add(log_tr)
-                    await db.commit()
-                except Exception as tr_err:
-                    logger.error(f"TR tweet error: {tr_err}")
-                    log_tr = ActivityLog(
-                        action="tr_tweet_error",
-                        details=f"Failed to generate/post TR tweet: {str(tr_err)[:200]}",
-                        status="error",
-                    )
-                    db.add(log_tr)
-                    await db.commit()
-
-                # Generate blog articles (EN + TR) using Kimi K2.5
-                try:
-                    logger.info("Generating blog articles with Kimi K2.5...")
-                    en_blog = await ai_service.generate_blog_post(
-                        article, tweet_content, language="en", model=model
-                    )
-                    blog_en = BlogPost(
-                        tweet_id=tweet.id,
-                        article_id=article.id,
-                        title=en_blog["title"],
-                        content=en_blog["content"],
-                        language="en",
-                        ai_model_used=en_blog.get("model", model),
-                        status="draft",
-                    )
-                    db.add(blog_en)
-
-                    tr_blog = await ai_service.generate_blog_post(
-                        article, tweet_content, language="tr", model=model
-                    )
-                    blog_tr = BlogPost(
-                        tweet_id=tweet.id,
-                        article_id=article.id,
-                        title=tr_blog["title"],
-                        content=tr_blog["content"],
-                        language="tr",
-                        ai_model_used=tr_blog.get("model", model),
-                        status="draft",
-                    )
-                    db.add(blog_tr)
-                    await db.commit()
-
-                    logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}' ({en_blog.get('model', '?')}), TR='{tr_blog['title'][:50]}' ({tr_blog.get('model', '?')})")
-                    log_blog = ActivityLog(
-                        action="blog_generated",
-                        details=f"Blog articles created with {en_blog.get('model', '?')}: {en_blog['title'][:80]}",
-                        status="success",
-                    )
-                    db.add(log_blog)
-                    await db.commit()
-                except Exception as blog_err:
-                    logger.error(f"Blog generation error: {blog_err}")
-                    log_blog = ActivityLog(
-                        action="blog_error",
-                        details=f"Failed to generate blog: {str(blog_err)[:200]}",
-                        status="error",
-                    )
-                    db.add(log_blog)
-                    await db.commit()
+                        db.add(blog_tr)
+                        await db.commit()
+                        logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}', TR='{tr_blog['title'][:50]}'")
+                        db.add(ActivityLog(action="blog_generated", details=f"Blog: {en_blog['title'][:80]}", status="success"))
+                        await db.commit()
+                    except Exception as blog_err:
+                        logger.error(f"Blog generation error: {blog_err}")
+                        db.add(ActivityLog(action="blog_error", details=f"Blog failed: {str(blog_err)[:200]}", status="error"))
+                        await db.commit()
 
                 logger.info("=== TWEET JOB FINISHED ===")
 
             except Exception as e:
                 logger.error(f"TWEET JOB ERROR: {e}", exc_info=True)
-                log = ActivityLog(
-                    action="auto_tweet_error",
-                    details=f"Error in auto tweet job: {str(e)}",
-                    status="error",
-                )
-                db.add(log)
+                db.add(ActivityLog(action="auto_tweet_error", details=f"Error: {str(e)}", status="error"))
                 await db.commit()
 
     async def retry_queued_tweets(self):
