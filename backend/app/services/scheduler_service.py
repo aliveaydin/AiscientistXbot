@@ -594,19 +594,19 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Mention checking job (every 5 minutes)
+        # Mention checking job (every 15 minutes to reduce API reads)
         self.scheduler.add_job(
             self.check_and_reply_mentions,
-            IntervalTrigger(minutes=5),
+            IntervalTrigger(minutes=15),
             id="mention_job",
             name="Mention Checker",
             replace_existing=True,
         )
 
-        # Metrics update job (every 2 hours, batch API = 1 call per 100 tweets)
+        # Metrics update job (every 4 hours, batch API = 1 call per 100 tweets)
         self.scheduler.add_job(
             self.update_metrics_job,
-            IntervalTrigger(hours=2),
+            IntervalTrigger(hours=4),
             id="metrics_job",
             name="Metrics Updater",
             replace_existing=True,
