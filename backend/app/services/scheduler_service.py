@@ -218,13 +218,7 @@ class SchedulerService:
                 previous_tweets = [row[0] for row in prev_result.fetchall()]
                 model = await self._get_ai_model()
 
-                use_thread = await self._should_post_thread(db)
-                logger.info(f"Mode: {'THREAD' if use_thread else 'SINGLE'}")
-
-                if use_thread:
-                    tweet, tweet_content = await self._post_thread(article, model, previous_tweets, db)
-                else:
-                    tweet, tweet_content = await self._post_single_tweet(article, model, previous_tweets, db)
+                tweet, tweet_content = await self._post_single_tweet(article, model, previous_tweets, db)
 
                 # Generate blog articles
                 if tweet:
@@ -594,21 +588,21 @@ class SchedulerService:
             replace_existing=True,
         )
 
-        # Mention checking job (every 15 minutes to reduce API reads)
-        self.scheduler.add_job(
-            self.check_and_reply_mentions,
-            IntervalTrigger(minutes=15),
-            id="mention_job",
-            name="Mention Checker",
-            replace_existing=True,
-        )
+        # Mention checker DISABLED to save API costs (user handles replies manually)
+        # self.scheduler.add_job(
+        #     self.check_and_reply_mentions,
+        #     IntervalTrigger(minutes=15),
+        #     id="mention_job",
+        #     name="Mention Checker",
+        #     replace_existing=True,
+        # )
 
-        # Metrics update job (every 4 hours, batch API = 1 call per 100 tweets)
+        # Metrics update once daily (saves API reads, 1 batch call per day)
         self.scheduler.add_job(
             self.update_metrics_job,
-            IntervalTrigger(hours=4),
+            IntervalTrigger(hours=24),
             id="metrics_job",
-            name="Metrics Updater",
+            name="Metrics Updater (Daily)",
             replace_existing=True,
         )
 
@@ -629,12 +623,8 @@ class SchedulerService:
             logger.info(f"  Job: {job.id} -> next run: {job.next_run_time}")
 
     async def run_initial_jobs(self):
-        """Run metrics, retry, and arxiv fetch immediately after startup."""
+        """Run retry and arxiv fetch on startup. Metrics run once daily to save API reads."""
         logger.info("Running initial jobs after startup...")
-        try:
-            await self.update_metrics_job()
-        except Exception as e:
-            logger.error(f"Initial metrics job error: {e}")
         try:
             await self.retry_queued_tweets()
         except Exception as e:
