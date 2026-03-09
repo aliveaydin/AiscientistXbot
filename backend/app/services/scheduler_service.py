@@ -532,7 +532,7 @@ class SchedulerService:
         async with async_session() as db:
             try:
                 imported = await arxiv_service.fetch_and_import(
-                    db, max_papers=3, min_score=6.0
+                    db, max_papers=6, min_score=6.0
                 )
                 logger.info(f"ArXiv fetch complete: {len(imported)} papers imported")
             except Exception as e:
@@ -540,6 +540,25 @@ class SchedulerService:
                 log = ActivityLog(
                     action="arxiv_fetch_error",
                     details=f"Error fetching ArXiv papers: {str(e)[:200]}",
+                    status="error",
+                )
+                db.add(log)
+                await db.commit()
+
+    async def fetch_classic_papers(self):
+        """Fetch notable AI papers from the last 10 years."""
+        logger.info("=== CLASSIC PAPERS FETCH JOB STARTED ===")
+        async with async_session() as db:
+            try:
+                imported = await arxiv_service.fetch_and_import_classics(
+                    db, max_papers=3, min_score=7.0
+                )
+                logger.info(f"Classic papers fetch complete: {len(imported)} papers imported")
+            except Exception as e:
+                logger.error(f"CLASSICS JOB ERROR: {e}", exc_info=True)
+                log = ActivityLog(
+                    action="classics_fetch_error",
+                    details=f"Error fetching classic papers: {str(e)[:200]}",
                     status="error",
                 )
                 db.add(log)
@@ -612,6 +631,15 @@ class SchedulerService:
             IntervalTrigger(hours=12),
             id="arxiv_job",
             name="ArXiv Paper Fetcher",
+            replace_existing=True,
+        )
+
+        # Classic AI papers fetch (every 24 hours, notable papers from last 10 years)
+        self.scheduler.add_job(
+            self.fetch_classic_papers,
+            IntervalTrigger(hours=24),
+            id="classics_job",
+            name="Classic AI Paper Fetcher",
             replace_existing=True,
         )
 
