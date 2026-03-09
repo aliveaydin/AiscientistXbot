@@ -45,14 +45,13 @@ class TwitterService:
             payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
         endpoints = [
-            "https://api.twitter.com/2/tweets",
             "https://api.x.com/2/tweets",
+            "https://api.twitter.com/2/tweets",
         ]
 
         last_error = ""
         for endpoint in endpoints:
-            # OAuth must be re-generated per endpoint (signature includes URL)
-            for attempt in range(2):
+            for attempt in range(3):
                 try:
                     resp = requests.post(
                         endpoint,
@@ -66,19 +65,20 @@ class TwitterService:
                         data = resp.json()
                         return {"success": True, "tweet_id": data["data"]["id"]}
                     elif resp.status_code == 429:
+                        logger.warning(f"{endpoint}: Rate limited, waiting 10s (attempt {attempt+1})")
                         time.sleep(10)
                         continue
                     elif resp.status_code == 503:
                         last_error = f"{endpoint}: 503 Service Unavailable"
-                        print(f"[TwitterBot] {last_error} (attempt {attempt+1})")
-                        time.sleep(3)
+                        logger.warning(f"{last_error} (attempt {attempt+1}/3)")
+                        time.sleep(5 * (attempt + 1))
                         continue
                     else:
                         last_error = f"{endpoint}: {resp.status_code}: {resp.text[:200]}"
-                        break  # Non-retryable error, try next endpoint
+                        break
                 except requests.exceptions.RequestException as e:
                     last_error = f"{endpoint}: {str(e)}"
-                    time.sleep(2)
+                    time.sleep(3)
 
         return {"success": False, "error": last_error}
 
