@@ -11,7 +11,7 @@ from typing import List, Optional, Dict
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Article, ResearchProject, AgentMessage, AgentWork, ResearchPaper
+from app.models import Article, ResearchProject, AgentMessage, AgentWork, ResearchPaper, ProjectReference
 
 logger = logging.getLogger("lab")
 
@@ -133,17 +133,180 @@ class LabService:
         await db.flush()
         return work
 
+    async def _search_and_import_topic_papers(self, db: AsyncSession, project: ResearchProject, min_papers: int = 10):
+        """Search ArXiv for papers related to the project topic, import and link them."""
+        from app.services.arxiv_service import ArxivService
+
+        topic = project.topic
+        if not topic:
+            return
+
+        logger.info(f"[Lab] Searching ArXiv for topic: {topic}")
+
+        category_filter = " OR ".join(f"cat:{cat}" for cat in [
+            "cs.AI", "cs.LG", "cs.CL", "cs.CV", "cs.NE", "stat.ML",
+        ])
+        keywords = [kw.strip() for kw in topic.replace(",", " ").split() if len(kw.strip()) > 2]
+        keyword_query = " AND ".join(f"all:{kw}" for kw in keywords[:5])
+        full_query = f"({keyword_query}) AND ({category_filter})"
+
+        import httpx
+        import re
+        import xml.etree.ElementTree as ET
+
+        params = {
+            "search_query": full_query,
+            "sortBy": "relevance",
+            "sortOrder": "descending",
+            "max_results": min_papers * 3,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                response = await client.get("https://export.arxiv.org/api/query", params=params)
+                response.raise_for_status()
+        except Exception as e:
+            logger.error(f"[Lab] ArXiv search failed: {e}")
+            return
+
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        root = ET.fromstring(response.text)
+
+        existing = await db.execute(select(Article.arxiv_id).where(Article.arxiv_id.isnot(None)))
+        existing_ids = {row[0] for row in existing.fetchall()}
+
+        imported_count = 0
+        for entry in root.findall("atom:entry", ns):
+            if imported_count >= min_papers:
+                break
+
+            arxiv_id_url = entry.find("atom:id", ns).text
+            arxiv_id = arxiv_id_url.split("/abs/")[-1]
+
+            if arxiv_id in existing_ids:
+                art_result = await db.execute(select(Article).where(Article.arxiv_id == arxiv_id))
+                existing_art = art_result.scalar_one_or_none()
+                if existing_art:
+                    ref = ProjectReference(project_id=project.id, article_id=existing_art.id)
+                    db.add(ref)
+                    imported_count += 1
+                continue
+
+            title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
+            title = re.sub(r"\s+", " ", title)
+            abstract = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
+            abstract = re.sub(r"\s+", " ", abstract)
+            categories = [cat.get("term") for cat in entry.findall("atom:category", ns)]
+
+            pdf_link = None
+            for link in entry.findall("atom:link", ns):
+                if link.get("title") == "pdf":
+                    pdf_link = link.get("href")
+
+            content = f"{title}\n\nAbstract:\n{abstract}"
+
+            article = Article(
+                filename=f"arxiv_{arxiv_id.replace('/', '_')}.pdf",
+                title=title,
+                content=content,
+                file_type="pdf",
+                source="arxiv",
+                arxiv_id=arxiv_id,
+                arxiv_url=f"https://arxiv.org/abs/{arxiv_id}",
+                arxiv_categories=", ".join(categories),
+                is_processed=False,
+            )
+            db.add(article)
+            await db.flush()
+
+            ref = ProjectReference(project_id=project.id, article_id=article.id)
+            db.add(ref)
+            existing_ids.add(arxiv_id)
+            imported_count += 1
+            logger.info(f"[Lab] Imported reference: {title[:60]}")
+
+        also_link = await db.execute(
+            select(Article).where(Article.arxiv_id.is_(None)).order_by(Article.added_at.desc()).limit(5)
+        )
+        for art in also_link.scalars().all():
+            existing_ref = await db.execute(
+                select(ProjectReference).where(
+                    ProjectReference.project_id == project.id,
+                    ProjectReference.article_id == art.id,
+                )
+            )
+            if not existing_ref.scalar_one_or_none():
+                db.add(ProjectReference(project_id=project.id, article_id=art.id))
+
+        await db.commit()
+        logger.info(f"[Lab] Total references linked: {imported_count}+ for project {project.id}")
+
+    async def _get_project_paper_context(self, db: AsyncSession, project: ResearchProject) -> str:
+        """Get paper context specific to this project's references, or all papers if no references."""
+        refs_result = await db.execute(
+            select(Article).join(ProjectReference, ProjectReference.article_id == Article.id).where(
+                ProjectReference.project_id == project.id
+            ).order_by(Article.relevance_score.desc().nullslast())
+        )
+        articles = refs_result.scalars().all()
+
+        if not articles:
+            return await self._get_paper_context(db)
+
+        parts = []
+        for art in articles:
+            summary = art.summary or (art.content[:600] + "..." if art.content and len(art.content) > 600 else art.content or "")
+            source = f" [ArXiv: {art.arxiv_id}]" if art.arxiv_id else ""
+            parts.append(f"[{art.title or art.filename}]{source}\n{summary}")
+
+        return "\n\n---\n\n".join(parts)
+
+    async def get_project_references(self, db: AsyncSession, project_id: int) -> list:
+        result = await db.execute(
+            select(ProjectReference, Article).join(Article, ProjectReference.article_id == Article.id).where(
+                ProjectReference.project_id == project_id
+            ).order_by(ProjectReference.created_at)
+        )
+        rows = result.all()
+        return [
+            {
+                "id": ref.id,
+                "project_id": ref.project_id,
+                "article_id": ref.article_id,
+                "article_title": art.title or art.filename,
+                "article_source": art.source,
+                "arxiv_url": art.arxiv_url,
+                "created_at": ref.created_at,
+            }
+            for ref, art in rows
+        ]
+
     # ─── Phase Runners ──────────────────────────────────────────────
 
     async def _run_brainstorm(self, db: AsyncSession, project: ResearchProject):
         logger.info(f"[Lab] BRAINSTORM phase for project {project.id}")
-        paper_ctx = await self._get_paper_context(db)
+
+        ref_ctx = await self._get_project_paper_context(db, project)
+
+        topic_instruction = ""
+        if project.topic:
+            topic_instruction = (
+                f"\n\nIMPORTANT: The research topic has been specified by the PI: \"{project.topic}\"\n"
+                f"All ideas MUST be directly related to this topic. Use the reference papers as foundation.\n"
+            )
 
         for agent_key in ["aria", "marcus", "elena"]:
+            prev_history = await self._get_conversation_history(db, project.id, ["brainstorm"])
             agent = AGENTS[agent_key]
+
+            prev_note = ""
+            if prev_history:
+                prev_note = f"\n\nYour colleagues have already proposed ideas:\n{prev_history}\n\nBuild on their ideas or propose complementary ones. Avoid duplication.\n"
+
             prompt = (
                 f"You are in a research lab brainstorming session.\n\n"
-                f"Here is a summary of papers available in our lab:\n\n{paper_ctx}\n\n"
+                f"Here is a summary of reference papers:\n\n{ref_ctx}\n\n"
+                f"{topic_instruction}{prev_note}"
                 f"Based on these papers, propose 2-3 original research ideas. For each idea, provide:\n"
                 f"1. Title\n2. Research question\n3. Why it matters (novelty/impact)\n4. Rough approach\n"
                 f"Be specific and creative. Draw connections across papers. Think about what gaps exist."
@@ -151,6 +314,7 @@ class LabService:
             response = await self._call_agent(agent_key, agent["system_prompt"], prompt)
             await self._save_message(db, project.id, agent_key, response, "brainstorm", 1)
             await self._save_work(db, project.id, agent_key, "idea", f"Research Ideas from {agent['name']}", response)
+            await db.flush()
 
         await db.commit()
 
@@ -158,12 +322,12 @@ class LabService:
         logger.info(f"[Lab] DISCUSSION phase for project {project.id} ({rounds} rounds)")
 
         for round_num in range(1, rounds + 1):
-            prev_history = await self._get_conversation_history(db, project.id, ["brainstorm", "discussion"])
-
             for agent_key in ["aria", "marcus", "elena"]:
+                prev_history = await self._get_conversation_history(db, project.id, ["brainstorm", "discussion"])
                 agent = AGENTS[agent_key]
+                topic_note = f"\nResearch topic: \"{project.topic}\"\n" if project.topic else ""
                 prompt = (
-                    f"Research lab discussion - Round {round_num}/{rounds}.\n\n"
+                    f"Research lab discussion - Round {round_num}/{rounds}.\n{topic_note}\n"
                     f"Previous conversation:\n{prev_history}\n\n"
                     f"Discuss the proposed research ideas. Comment on other team members' proposals. "
                     f"Point out strengths, weaknesses, feasibility concerns, and potential improvements. "
@@ -173,6 +337,7 @@ class LabService:
                 )
                 response = await self._call_agent(agent_key, agent["system_prompt"], prompt)
                 await self._save_message(db, project.id, agent_key, response, "discussion", round_num)
+                await db.flush()
 
             await db.commit()
 
@@ -208,7 +373,7 @@ class LabService:
     async def _run_methodology(self, db: AsyncSession, project: ResearchProject):
         logger.info(f"[Lab] METHODOLOGY phase for project {project.id}")
         history = await self._get_conversation_history(db, project.id, ["decision"])
-        paper_ctx = await self._get_paper_context(db, max_papers=15)
+        paper_ctx = await self._get_project_paper_context(db, project)
 
         elena_prompt = (
             f"Research decision:\n{project.selected_idea}\n\n"
@@ -500,12 +665,21 @@ class LabService:
 
     # ─── Public API ──────────────────────────────────────────────────
 
-    async def create_project(self, db: AsyncSession, title: str, description: Optional[str] = None) -> ResearchProject:
-        project = ResearchProject(title=title, description=description)
+    async def create_project(self, db: AsyncSession, title: str, description: Optional[str] = None, topic: Optional[str] = None) -> ResearchProject:
+        project = ResearchProject(title=title, description=description, topic=topic)
         db.add(project)
         await db.commit()
         await db.refresh(project)
-        logger.info(f"[Lab] Created project: {title} (id={project.id})")
+        logger.info(f"[Lab] Created project: {title} (id={project.id}, topic={topic})")
+
+        if topic:
+            await self._search_and_import_topic_papers(db, project, min_papers=10)
+        else:
+            all_arts = await db.execute(select(Article).order_by(Article.added_at.desc()).limit(30))
+            for art in all_arts.scalars().all():
+                db.add(ProjectReference(project_id=project.id, article_id=art.id))
+            await db.commit()
+
         return project
 
     async def run_next_phase(self, db: AsyncSession, project_id: int) -> dict:
@@ -576,11 +750,15 @@ class LabService:
         work_count = await db.execute(
             select(func.count(AgentWork.id)).where(AgentWork.project_id == project_id)
         )
+        ref_count = await db.execute(
+            select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project_id)
+        )
 
         return {
             "id": project.id,
             "title": project.title,
             "description": project.description,
+            "topic": project.topic,
             "status": project.status,
             "current_phase": project.current_phase,
             "selected_idea": project.selected_idea,
@@ -589,6 +767,7 @@ class LabService:
             "updated_at": project.updated_at,
             "message_count": msg_count.scalar() or 0,
             "work_count": work_count.scalar() or 0,
+            "reference_count": ref_count.scalar() or 0,
         }
 
     async def get_chatboard(self, db: AsyncSession, project_id: int) -> List[AgentMessage]:

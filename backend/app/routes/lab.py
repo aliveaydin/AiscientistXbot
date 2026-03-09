@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.database import get_db, async_session
-from app.models import ResearchProject, AgentMessage, AgentWork, ResearchPaper
+from app.models import ResearchProject, ProjectReference, AgentMessage, AgentWork, ResearchPaper, Article
 from app.schemas import (
     ResearchProjectCreate, ResearchProjectResponse,
     AgentMessageResponse, AgentWorkResponse, ResearchPaperResponse,
+    ProjectReferenceResponse,
 )
 from app.services.lab_service import lab_service, AGENTS, PHASES
 
@@ -43,9 +44,13 @@ async def get_projects(db: AsyncSession = Depends(get_db)):
         work_count = await db.execute(
             select(func.count(AgentWork.id)).where(AgentWork.project_id == p.id)
         )
+        ref_count = await db.execute(
+            select(func.count(ProjectReference.id)).where(ProjectReference.project_id == p.id)
+        )
         data = ResearchProjectResponse.model_validate(p)
         data.message_count = msg_count.scalar() or 0
         data.work_count = work_count.scalar() or 0
+        data.reference_count = ref_count.scalar() or 0
         out.append(data)
     return out
 
@@ -56,7 +61,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new research project."""
-    project = await lab_service.create_project(db, req.title, req.description)
+    project = await lab_service.create_project(db, req.title, req.description, req.topic)
     return ResearchProjectResponse.model_validate(project)
 
 
@@ -117,6 +122,13 @@ async def get_paper(project_id: int, db: AsyncSession = Depends(get_db)):
     if not paper:
         raise HTTPException(status_code=404, detail="No paper generated yet")
     return paper
+
+
+@router.get("/projects/{project_id}/references")
+async def get_project_references(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Get all reference papers linked to a project."""
+    refs = await lab_service.get_project_references(db, project_id)
+    return refs
 
 
 @router.delete("/projects/{project_id}")

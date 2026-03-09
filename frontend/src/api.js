@@ -71,6 +71,7 @@ export const runLabAllPhases = (id) => api.post(`/lab/projects/${id}/run-all`);
 export const getLabChatboard = (id) => api.get(`/lab/projects/${id}/chatboard`);
 export const getLabAgentWork = (id, agent) => api.get(`/lab/projects/${id}/agent/${agent}/work`);
 export const getLabPaper = (id) => api.get(`/lab/projects/${id}/paper`);
+export const getLabReferences = (id) => api.get(`/lab/projects/${id}/references`);
 export const deleteLabProject = (id) => api.delete(`/lab/projects/${id}`);
 
 // Settings

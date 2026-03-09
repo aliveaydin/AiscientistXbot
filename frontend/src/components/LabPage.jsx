@@ -7,7 +7,7 @@ import {
 import {
   getLabProjects, createLabProject, getLabProject, runLabPhase,
   runLabAllPhases, getLabChatboard, getLabAgentWork, getLabPaper,
-  deleteLabProject
+  getLabReferences, deleteLabProject
 } from '../api';
 
 const PHASES = ['brainstorm', 'discussion', 'decision', 'methodology', 'experiments', 'writing', 'review'];
@@ -154,12 +154,15 @@ export default function LabPage() {
   const [chatboard, setChatboard] = useState([]);
   const [agentWork, setAgentWork] = useState([]);
   const [paper, setPaper] = useState(null);
+  const [references, setReferences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [phaseRunning, setPhaseRunning] = useState(false);
   const [allRunning, setAllRunning] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const [newTopic, setNewTopic] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const chatEndRef = useRef(null);
 
   useEffect(() => { loadProjects(); }, []);
@@ -191,6 +194,9 @@ export default function LabPage() {
           const paperRes = await getLabPaper(selectedId);
           setPaper(paperRes.data);
         } catch { setPaper(null); }
+      } else if (activeTab === 'refs') {
+        const refsRes = await getLabReferences(selectedId);
+        setReferences(refsRes.data);
       } else if (['aria', 'marcus', 'elena'].includes(activeTab)) {
         const workRes = await getLabAgentWork(selectedId, activeTab);
         setAgentWork(workRes.data);
@@ -202,15 +208,23 @@ export default function LabPage() {
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
+    setCreating(true);
     try {
-      const res = await createLabProject({ title: newTitle, description: newDesc || null });
+      const res = await createLabProject({
+        title: newTitle,
+        description: newDesc || null,
+        topic: newTopic || null,
+      });
       setProjects([res.data, ...projects]);
       setSelectedId(res.data.id);
       setNewTitle('');
       setNewDesc('');
+      setNewTopic('');
       setShowCreate(false);
     } catch (err) {
       alert('Failed to create project: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -256,6 +270,7 @@ export default function LabPage() {
 
   const tabs = [
     { id: 'board', label: 'Chatboard', icon: MessageSquare },
+    { id: 'refs', label: `References${project?.reference_count ? ` (${project.reference_count})` : ''}`, icon: FileText },
     { id: 'aria', label: 'Prof. Aria', color: AGENTS.aria.color },
     { id: 'marcus', label: 'Dr. Marcus', color: AGENTS.marcus.color },
     { id: 'elena', label: 'Dr. Elena', color: AGENTS.elena.color },
@@ -289,8 +304,21 @@ export default function LabPage() {
               placeholder="Description (optional)..."
               className="input-field text-sm resize-none h-16"
             />
-            <button onClick={handleCreate} className="btn-primary w-full text-sm justify-center">
-              <FlaskConical className="w-4 h-4" /> Create Project
+            <input
+              value={newTopic}
+              onChange={(e) => setNewTopic(e.target.value)}
+              placeholder="Research topic (optional, e.g. 'mixture of experts scaling')"
+              className="input-field text-sm"
+            />
+            {newTopic && (
+              <p className="text-xs text-cyan-400">Topic specified: ArXiv'dan 10+ ilgili paper aranacak.</p>
+            )}
+            <button onClick={handleCreate} disabled={creating} className="btn-primary w-full text-sm justify-center">
+              {creating ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Creating &amp; Searching Papers...</>
+              ) : (
+                <><FlaskConical className="w-4 h-4" /> Create Project</>
+              )}
             </button>
           </div>
         )}
@@ -314,6 +342,7 @@ export default function LabPage() {
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-medium text-sm truncate">{p.title}</p>
+                    {p.topic && <p className="text-xs text-cyan-400/70 truncate mt-0.5">{p.topic}</p>}
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`text-xs px-1.5 py-0.5 rounded ${
                         p.status === 'completed' ? 'bg-green-500/20 text-green-400' :
@@ -321,6 +350,9 @@ export default function LabPage() {
                         'bg-blue-500/20 text-blue-400'
                       }`}>{p.status}</span>
                       <span className="text-xs text-gray-500">{PHASE_LABELS[p.current_phase]}</span>
+                      {p.reference_count > 0 && (
+                        <span className="text-xs text-gray-500">{p.reference_count} refs</span>
+                      )}
                     </div>
                   </div>
                   <button
@@ -354,6 +386,9 @@ export default function LabPage() {
                 <div>
                   <h3 className="text-lg font-bold text-white">{project.title}</h3>
                   {project.description && <p className="text-sm text-gray-400 mt-0.5">{project.description}</p>}
+                  {project.topic && (
+                    <p className="text-xs text-cyan-400 mt-1">Topic: {project.topic}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -415,6 +450,32 @@ export default function LabPage() {
                     chatboard.map((msg) => <ChatMessage key={msg.id} msg={msg} />)
                   )}
                   <div ref={chatEndRef} />
+                </div>
+              )}
+
+              {activeTab === 'refs' && (
+                <div className="space-y-2">
+                  {references.length === 0 ? (
+                    <p className="text-gray-500 text-center py-12">No reference papers linked yet.</p>
+                  ) : (
+                    references.map((ref) => (
+                      <div key={ref.id} className="flex items-center justify-between p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-white font-medium truncate">{ref.article_title}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-xs px-1.5 py-0.5 rounded ${
+                              ref.article_source === 'arxiv' ? 'bg-orange-500/20 text-orange-400' : 'bg-gray-500/20 text-gray-400'
+                            }`}>{ref.article_source}</span>
+                          </div>
+                        </div>
+                        {ref.arxiv_url && (
+                          <a href={ref.arxiv_url} target="_blank" rel="noreferrer" className="text-xs text-blue-400 hover:underline ml-3 flex-shrink-0">
+                            ArXiv
+                          </a>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
 

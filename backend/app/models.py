@@ -113,6 +113,7 @@ class ResearchProject(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
+    topic = Column(Text, nullable=True)
     status = Column(String(50), default="active")  # active, completed, paused, failed
     current_phase = Column(String(50), default="brainstorm")
     selected_idea = Column(Text, nullable=True)
@@ -123,6 +124,19 @@ class ResearchProject(Base):
     messages = relationship("AgentMessage", back_populates="project", cascade="all, delete-orphan")
     works = relationship("AgentWork", back_populates="project", cascade="all, delete-orphan")
     papers = relationship("ResearchPaper", back_populates="project", cascade="all, delete-orphan")
+    references = relationship("ProjectReference", back_populates="project", cascade="all, delete-orphan")
+
+
+class ProjectReference(Base):
+    __tablename__ = "project_references"
+
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("research_projects.id"), nullable=False)
+    article_id = Column(Integer, ForeignKey("articles.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("ResearchProject", back_populates="references")
+    article = relationship("Article")
 
 
 class AgentMessage(Base):

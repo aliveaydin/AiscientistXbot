@@ -157,12 +157,14 @@ class ActivityLogResponse(BaseModel):
 class ResearchProjectCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    topic: Optional[str] = None
 
 
 class ResearchProjectResponse(BaseModel):
     id: int
     title: str
     description: Optional[str] = None
+    topic: Optional[str] = None
     status: str
     current_phase: str
     selected_idea: Optional[str] = None
@@ -171,6 +173,20 @@ class ResearchProjectResponse(BaseModel):
     updated_at: datetime
     message_count: int = 0
     work_count: int = 0
+    reference_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class ProjectReferenceResponse(BaseModel):
+    id: int
+    project_id: int
+    article_id: int
+    article_title: Optional[str] = None
+    article_source: Optional[str] = None
+    arxiv_url: Optional[str] = None
+    created_at: datetime
 
     class Config:
         from_attributes = True
