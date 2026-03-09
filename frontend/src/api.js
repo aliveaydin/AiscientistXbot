@@ -27,6 +27,7 @@ export const regenerateTweet = (tweetId, aiModel = null) => {
 };
 export const updateTweet = (tweetId, data) => api.put(`/tweets/${tweetId}`, data);
 export const deleteTweet = (tweetId) => api.delete(`/tweets/${tweetId}`);
+export const autoReplyTweet = (tweetId) => api.post(`/tweets/${tweetId}/auto-reply`);
 
 // Articles
 export const getArticles = () => api.get('/articles/');

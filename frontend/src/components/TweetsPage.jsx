@@ -4,12 +4,13 @@ import {
   Repeat2, MessageCircle, Eye, Bookmark, Check, X,
   ChevronDown, Wand2, BookOpen
 } from 'lucide-react';
-import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles, generateBlogFromTweet } from '../api';
+import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles, generateBlogFromTweet, autoReplyTweet } from '../api';
 
-function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBlog }) {
+function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBlog, onAutoReply }) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(tweet.content);
   const [blogLoading, setBlogLoading] = useState(false);
+  const [replyLoading, setReplyLoading] = useState(false);
 
   const handleSave = () => {
     onEdit(tweet.id, editContent);
@@ -70,26 +71,46 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
             </div>
           )}
 
-          {tweet.article_id && (
-            <div className="mt-3">
+          {tweet.status === 'posted' && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
               <button
                 onClick={async () => {
-                  setBlogLoading(true);
+                  setReplyLoading(true);
                   try {
-                    await onGenerateBlog(tweet.id);
+                    await onAutoReply(tweet.id);
                   } finally {
-                    setBlogLoading(false);
+                    setReplyLoading(false);
                   }
                 }}
-                disabled={blogLoading}
-                className="btn-secondary text-sm py-1.5 px-3"
+                disabled={replyLoading}
+                className="btn-primary text-sm py-1.5 px-3"
               >
-                {blogLoading ? (
-                  <><RefreshCw className="w-4 h-4 animate-spin" /> Generating Blog...</>
+                {replyLoading ? (
+                  <><RefreshCw className="w-4 h-4 animate-spin" /> Checking &amp; Replying...</>
                 ) : (
-                  <><BookOpen className="w-4 h-4" /> Generate Blog Article</>
+                  <><MessageCircle className="w-4 h-4" /> Check &amp; Reply</>
                 )}
               </button>
+              {tweet.article_id && (
+                <button
+                  onClick={async () => {
+                    setBlogLoading(true);
+                    try {
+                      await onGenerateBlog(tweet.id);
+                    } finally {
+                      setBlogLoading(false);
+                    }
+                  }}
+                  disabled={blogLoading}
+                  className="btn-secondary text-sm py-1.5 px-3"
+                >
+                  {blogLoading ? (
+                    <><RefreshCw className="w-4 h-4 animate-spin" /> Generating Blog...</>
+                  ) : (
+                    <><BookOpen className="w-4 h-4" /> Generate Blog Article</>
+                  )}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -207,6 +228,22 @@ export default function TweetsPage() {
     }
   };
 
+  const handleAutoReply = async (tweetId) => {
+    try {
+      const res = await autoReplyTweet(tweetId);
+      const { replies_posted, replies, message } = res.data;
+      if (replies_posted === 0) {
+        alert(message || 'No new replies found for this tweet.');
+      } else {
+        const details = replies.map(r => `@${r.mention_author}: "${r.mention_text.slice(0, 60)}..."\n→ ${r.our_reply.slice(0, 80)}...`).join('\n\n');
+        alert(`${message}\n\n${details}`);
+      }
+      await loadData();
+    } catch (err) {
+      alert('Failed to check replies: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -305,6 +342,7 @@ export default function TweetsPage() {
                 onDelete={handleDelete}
                 onEdit={handleEdit}
                 onGenerateBlog={handleGenerateBlog}
+                onAutoReply={handleAutoReply}
               />
             </div>
           ))}

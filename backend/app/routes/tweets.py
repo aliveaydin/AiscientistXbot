@@ -1,14 +1,17 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
 from app.database import get_db
-from app.models import Tweet, Article, ActivityLog
+from app.models import Tweet, Reply, Article, ActivityLog
 from app.schemas import TweetResponse, TweetCreate, GenerateTweetRequest
 from app.services.ai_service import ai_service
 from app.services.twitter_service import twitter_service
 from app.services.article_service import ArticleService
 from typing import Optional
+
+logger = logging.getLogger("tweets")
 
 router = APIRouter(prefix="/api/tweets", tags=["Tweets"])
 
@@ -318,4 +321,116 @@ async def translate_and_post_all_turkish(db: AsyncSession = Depends(get_db)):
         "message": f"Turkish translations: {translated} posted, {failed} failed/queued",
         "translated": translated,
         "failed": failed,
+    }
+
+
+@router.post("/{tweet_id}/auto-reply", response_model=dict)
+async def auto_reply_to_tweet(tweet_id: int, db: AsyncSession = Depends(get_db)):
+    """Fetch replies to a posted tweet, generate AI replies, and post them."""
+    result = await db.execute(select(Tweet).where(Tweet.id == tweet_id))
+    tweet = result.scalar_one_or_none()
+
+    if not tweet or not tweet.tweet_id:
+        raise HTTPException(status_code=404, detail="Tweet not found or not posted yet")
+
+    if tweet.status != "posted":
+        raise HTTPException(status_code=400, detail="Can only reply to posted tweets")
+
+    mentions = await twitter_service.get_mentions()
+
+    our_tweet_ids = {tweet.tweet_id}
+    replies_result = await db.execute(
+        select(Reply.reply_id).where(
+            Reply.tweet_id == tweet.id,
+            Reply.reply_id.isnot(None),
+        )
+    )
+    for rid in replies_result.scalars().all():
+        our_tweet_ids.add(rid)
+
+    our_user_id = twitter_service._cached_user_id
+    if not our_user_id:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        our_user_id = await loop.run_in_executor(
+            None, twitter_service._get_user_id_api
+        )
+
+    relevant = []
+    for m in mentions:
+        if m.get("author_id") == our_user_id:
+            continue
+        if m.get("parent_tweet_id") not in our_tweet_ids:
+            continue
+        existing = await db.execute(
+            select(Reply).where(Reply.incoming_reply_id == m["id"])
+        )
+        if existing.scalar_one_or_none():
+            continue
+        relevant.append(m)
+
+    if not relevant:
+        return {"message": "No new replies found for this tweet", "replies_posted": 0, "replies": []}
+
+    article = None
+    if tweet.article_id:
+        article = await ArticleService.get_article_by_id(db, tweet.article_id)
+
+    posted = []
+    for mention in relevant:
+        try:
+            reply_text = await ai_service.generate_reply(
+                original_tweet=tweet.content,
+                incoming_reply=mention["text"],
+                reply_user=mention.get("author_username", "user"),
+                article_content=article.content[:2000] if article and article.content else None,
+            )
+
+            if len(reply_text) > 500:
+                reply_text = reply_text[:497] + "..."
+
+            reply = Reply(
+                tweet_id=tweet.id,
+                incoming_text=mention["text"],
+                incoming_user=mention.get("author_username", "unknown"),
+                incoming_reply_id=mention["id"],
+                response_text=reply_text,
+                ai_model_used="default",
+                status="pending",
+            )
+            db.add(reply)
+            await db.commit()
+            await db.refresh(reply)
+
+            post_result = await twitter_service.post_reply(
+                reply_text, mention["id"], db, reply.id
+            )
+
+            if post_result.get("success"):
+                posted.append({
+                    "mention_author": mention.get("author_username"),
+                    "mention_text": mention["text"][:200],
+                    "our_reply": reply_text,
+                })
+                log = ActivityLog(
+                    action="manual_reply_posted",
+                    details=f"Replied to @{mention.get('author_username', '?')}: {reply_text[:100]}...",
+                    status="success",
+                )
+            else:
+                log = ActivityLog(
+                    action="manual_reply_failed",
+                    details=f"Failed reply to @{mention.get('author_username', '?')}: {post_result.get('error', '')[:150]}",
+                    status="error",
+                )
+            db.add(log)
+            await db.commit()
+
+        except Exception as e:
+            logger.error(f"Error replying to mention {mention['id']}: {e}")
+
+    return {
+        "message": f"Replied to {len(posted)} comment(s)",
+        "replies_posted": len(posted),
+        "replies": posted,
     }
