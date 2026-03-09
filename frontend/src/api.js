@@ -60,6 +60,19 @@ export const deleteBlogPost = (id) => api.delete(`/blog/${id}`);
 export const generateBlogFromTweet = (tweetDbId) => api.post(`/blog/generate-from-tweet/${tweetDbId}`);
 export const generateBlogFromArticle = (articleId) => api.post(`/blog/generate-from-article/${articleId}`);
 
+// Research Lab
+export const getLabAgents = () => api.get('/lab/agents');
+export const getLabPhases = () => api.get('/lab/phases');
+export const getLabProjects = () => api.get('/lab/projects');
+export const createLabProject = (data) => api.post('/lab/projects', data);
+export const getLabProject = (id) => api.get(`/lab/projects/${id}`);
+export const runLabPhase = (id) => api.post(`/lab/projects/${id}/run-phase`);
+export const runLabAllPhases = (id) => api.post(`/lab/projects/${id}/run-all`);
+export const getLabChatboard = (id) => api.get(`/lab/projects/${id}/chatboard`);
+export const getLabAgentWork = (id, agent) => api.get(`/lab/projects/${id}/agent/${agent}/work`);
+export const getLabPaper = (id) => api.get(`/lab/projects/${id}/paper`);
+export const deleteLabProject = (id) => api.delete(`/lab/projects/${id}`);
+
 // Settings
 export const getSettings = () => api.get('/settings/');
 export const updateSettings = (data) => api.put('/settings/', data);

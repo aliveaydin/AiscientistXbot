@@ -151,3 +151,67 @@ class ActivityLogResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# --- Research Lab Schemas ---
+class ResearchProjectCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+
+
+class ResearchProjectResponse(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    status: str
+    current_phase: str
+    selected_idea: Optional[str] = None
+    revision_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+    message_count: int = 0
+    work_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class AgentMessageResponse(BaseModel):
+    id: int
+    project_id: int
+    agent_name: str
+    content: str
+    phase: str
+    round_num: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AgentWorkResponse(BaseModel):
+    id: int
+    project_id: int
+    agent_name: str
+    work_type: str
+    title: str
+    content: str
+    metadata_json: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ResearchPaperResponse(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    abstract: Optional[str] = None
+    content: str
+    status: str
+    version: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

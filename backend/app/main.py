@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 from app.database import init_db
-from app.routes import dashboard, tweets, articles, settings_route, blog
+from app.routes import dashboard, tweets, articles, settings_route, blog, lab
 from app.services.scheduler_service import scheduler_service
 from app.services.article_service import ArticleService
 from app.database import async_session
@@ -72,6 +72,7 @@ app.include_router(tweets.router)
 app.include_router(articles.router)
 app.include_router(settings_route.router)
 app.include_router(blog.router)
+app.include_router(lab.router)
 
 # Serve frontend static files - check multiple possible locations
 frontend_candidates = [
