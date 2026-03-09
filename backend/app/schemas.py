@@ -50,6 +50,7 @@ class TweetResponse(BaseModel):
     tweet_id: Optional[str] = None
     content: str
     article_id: Optional[int] = None
+    article_title: Optional[str] = None
     ai_model_used: str
     status: str
     language: str = "en"

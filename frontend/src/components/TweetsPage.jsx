@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Send, RefreshCw, Trash2, Edit3, Sparkles, Heart, 
   Repeat2, MessageCircle, Eye, Bookmark, Check, X,
-  ChevronDown, Wand2, BookOpen
+  ChevronDown, Wand2, BookOpen, FileText
 } from 'lucide-react';
 import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles, generateBlogFromTweet, autoReplyTweet } from '../api';
 
@@ -45,7 +45,14 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
             <p className="text-white leading-relaxed">{tweet.content}</p>
           )}
 
-          <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 flex-wrap">
+          {tweet.article_title && (
+            <div className="flex items-center gap-1.5 mt-2 text-xs text-cyan-400/80">
+              <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+              <span className="truncate" title={tweet.article_title}>{tweet.article_title}</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 flex-wrap">
             <span className="badge-info">{tweet.ai_model_used}</span>
             <span className={
               tweet.status === 'posted' ? 'badge-success' :

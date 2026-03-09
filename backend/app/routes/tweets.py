@@ -23,11 +23,22 @@ async def get_tweets(
     db: AsyncSession = Depends(get_db),
 ):
     """Get all tweets with optional status filter."""
-    query = select(Tweet).order_by(Tweet.created_at.desc()).limit(limit)
+    query = (
+        select(Tweet, Article.title.label("art_title"))
+        .outerjoin(Article, Tweet.article_id == Article.id)
+        .order_by(Tweet.created_at.desc())
+        .limit(limit)
+    )
     if status:
         query = query.where(Tweet.status == status)
     result = await db.execute(query)
-    return result.scalars().all()
+    rows = result.all()
+    tweets = []
+    for tweet, art_title in rows:
+        data = TweetResponse.model_validate(tweet)
+        data.article_title = art_title
+        tweets.append(data)
+    return tweets
 
 
 @router.post("/generate", response_model=TweetResponse)
