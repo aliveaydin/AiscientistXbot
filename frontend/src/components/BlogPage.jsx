@@ -3,14 +3,16 @@ import {
   BookOpen, Globe, ChevronDown, ChevronUp, ExternalLink, 
   Trash2, CheckCircle, Clock, Send, Copy, Filter, Sparkles, RefreshCw
 } from 'lucide-react';
-import { getBlogPosts, updateBlogStatus, deleteBlogPost, getArticles, generateBlogFromArticle } from '../api';
+import { getBlogPosts, updateBlogStatus, deleteBlogPost, getAllArticles, generateBlogFromArticle, generateBlogFromTopic } from '../api';
 
 export default function BlogPage() {
   const [posts, setPosts] = useState([]);
   const [articles, setArticles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [generatingTopic, setGeneratingTopic] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState('');
+  const [blogTopic, setBlogTopic] = useState('');
   const [expandedId, setExpandedId] = useState(null);
   const [langFilter, setLangFilter] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
@@ -23,7 +25,7 @@ export default function BlogPage() {
     try {
       const [postsRes, articlesRes] = await Promise.all([
         getBlogPosts(langFilter),
-        getArticles(),
+        getAllArticles(),
       ]);
       setPosts(postsRes.data);
       setArticles(articlesRes.data);
@@ -58,6 +60,25 @@ export default function BlogPage() {
       alert('Failed to generate blog: ' + (err.response?.data?.detail || err.message));
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleGenerateFromTopic = async () => {
+    if (!blogTopic.trim()) {
+      alert('Please enter a research topic.');
+      return;
+    }
+    setGeneratingTopic(true);
+    try {
+      const res = await generateBlogFromTopic(blogTopic);
+      const { created, papers_found, papers_imported } = res.data;
+      alert(`Blog articles generated!\n${created.map(c => `${c.language.toUpperCase()}: ${c.title}`).join('\n')}\n\nPapers found: ${papers_found}, imported: ${papers_imported}`);
+      setBlogTopic('');
+      await loadPosts();
+    } catch (err) {
+      alert('Failed to generate blog: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setGeneratingTopic(false);
     }
   };
 
@@ -119,38 +140,59 @@ export default function BlogPage() {
       </div>
 
       {/* Generate Section */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+      <div className="card space-y-4">
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <Sparkles className="w-5 h-5 text-purple-400" />
           Generate Blog Article
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <select
-            value={selectedArticle}
-            onChange={(e) => setSelectedArticle(e.target.value)}
-            className="select-field md:col-span-2"
-          >
-            <option value="">Select a source paper...</option>
-            {articles.map((a) => (
-              <option key={a.id} value={a.id}>{a.title || a.filename}</option>
-            ))}
-          </select>
-
-          <button
-            onClick={handleGenerate}
-            disabled={generating || !selectedArticle}
-            className="btn-primary justify-center"
-          >
-            {generating ? (
-              <><RefreshCw className="w-4 h-4 animate-spin" /> Generating...</>
-            ) : (
-              <><Sparkles className="w-4 h-4" /> Generate EN + TR</>
-            )}
-          </button>
+        <div>
+          <p className="text-xs text-gray-400 mb-2">From source paper:</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <select
+              value={selectedArticle}
+              onChange={(e) => setSelectedArticle(e.target.value)}
+              className="select-field md:col-span-2"
+            >
+              <option value="">Select a source paper...</option>
+              {articles.map((a) => (
+                <option key={a.id} value={a.id}>{a.title || a.filename}</option>
+              ))}
+            </select>
+            <button
+              onClick={handleGenerate}
+              disabled={generating || !selectedArticle}
+              className="btn-primary justify-center"
+            >
+              {generating ? (
+                <><RefreshCw className="w-4 h-4 animate-spin" /> Generating...</>
+              ) : (
+                <><Sparkles className="w-4 h-4" /> Generate EN + TR</>
+              )}
+            </button>
+          </div>
         </div>
-        <p className="text-xs text-gray-500 mt-2">
-          Generates both English and Turkish blog articles using Kimi K2.5
-        </p>
+        <div className="border-t border-gray-800 pt-4">
+          <p className="text-xs text-gray-400 mb-2">Or from a research topic (searches ArXiv automatically):</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              value={blogTopic}
+              onChange={(e) => setBlogTopic(e.target.value)}
+              placeholder="Research topic, e.g. 'scaling laws in large language models'"
+              className="input-field text-sm md:col-span-2"
+            />
+            <button
+              onClick={handleGenerateFromTopic}
+              disabled={generatingTopic || !blogTopic.trim()}
+              className="btn-primary justify-center"
+            >
+              {generatingTopic ? (
+                <><RefreshCw className="w-4 h-4 animate-spin" /> Searching &amp; Writing...</>
+              ) : (
+                <><Globe className="w-4 h-4" /> Topic Blog EN + TR</>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Stats + Filter */}

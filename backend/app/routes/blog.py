@@ -172,6 +172,69 @@ async def generate_blog_from_article(article_id: int, db: AsyncSession = Depends
     return {"success": True, "created": created}
 
 
+@router.post("/generate-from-topic")
+async def generate_blog_from_topic(data: dict, db: AsyncSession = Depends(get_db)):
+    """Generate EN + TR blog articles from a research topic. Searches ArXiv for related papers."""
+    topic = data.get("topic", "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+
+    from app.services.lab_service import lab_service
+
+    search_terms = await lab_service._extract_search_terms(topic)
+    entries = await lab_service._search_arxiv_by_terms(search_terms, max_results=10)
+
+    ref_context = ""
+    imported_ids = []
+    existing_q = await db.execute(select(Article.arxiv_id).where(Article.arxiv_id.isnot(None)))
+    existing_ids = {row[0] for row in existing_q.fetchall()}
+
+    for entry in entries[:5]:
+        ref_context += f"- {entry['title']}: {entry['abstract'][:300]}...\n\n"
+        if entry["arxiv_id"] not in existing_ids:
+            art = Article(
+                filename=f"arxiv_{entry['arxiv_id'].replace('/', '_')}.pdf",
+                title=entry["title"],
+                content=f"{entry['title']}\n\nAbstract:\n{entry['abstract']}",
+                file_type="pdf",
+                source="arxiv",
+                arxiv_id=entry["arxiv_id"],
+                arxiv_url=f"https://arxiv.org/abs/{entry['arxiv_id']}",
+                arxiv_categories=", ".join(entry["categories"]),
+                is_processed=False,
+            )
+            db.add(art)
+            await db.flush()
+            imported_ids.append(art.id)
+            existing_ids.add(entry["arxiv_id"])
+
+    created = []
+    for lang in ["en", "tr"]:
+        blog_data = await ai_service.generate_blog_post(
+            article=None, tweet_content=None, language=lang,
+            topic=topic, reference_context=ref_context,
+        )
+        post = BlogPost(
+            tweet_id=None,
+            article_id=imported_ids[0] if imported_ids else None,
+            title=blog_data["title"],
+            content=blog_data["content"],
+            language=lang,
+            ai_model_used=blog_data.get("model", "kimi-k2.5"),
+            status="draft",
+        )
+        db.add(post)
+        created.append({"language": lang, "title": blog_data["title"], "model": blog_data.get("model", "?")})
+
+    await db.commit()
+    return {
+        "success": True,
+        "created": created,
+        "papers_found": len(entries),
+        "papers_imported": len(imported_ids),
+    }
+
+
 @router.delete("/{post_id}")
 async def delete_blog_post(post_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a blog post."""

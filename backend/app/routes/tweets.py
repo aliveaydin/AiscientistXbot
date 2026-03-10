@@ -19,14 +19,16 @@ router = APIRouter(prefix="/api/tweets", tags=["Tweets"])
 @router.get("/", response_model=list[TweetResponse])
 async def get_tweets(
     status: Optional[str] = None,
-    limit: int = 50,
+    limit: int = 20,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all tweets with optional status filter."""
+    """Get tweets with optional status filter and pagination."""
     query = (
         select(Tweet, Article.title.label("art_title"))
         .outerjoin(Article, Tweet.article_id == Article.id)
         .order_by(Tweet.created_at.desc())
+        .offset(offset)
         .limit(limit)
     )
     if status:
@@ -39,6 +41,20 @@ async def get_tweets(
         data.article_title = art_title
         tweets.append(data)
     return tweets
+
+
+@router.get("/count")
+async def get_tweet_count(
+    status: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get total tweet count for pagination."""
+    from sqlalchemy import func as sqlfunc
+    query = select(sqlfunc.count(Tweet.id))
+    if status:
+        query = query.where(Tweet.status == status)
+    result = await db.execute(query)
+    return {"count": result.scalar() or 0}
 
 
 @router.post("/generate", response_model=TweetResponse)

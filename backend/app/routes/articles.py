@@ -12,8 +12,12 @@ router = APIRouter(prefix="/api/articles", tags=["Articles"])
 
 
 @router.get("/", response_model=list[ArticleListResponse])
-async def get_articles(db: AsyncSession = Depends(get_db)):
-    """Get all articles."""
+async def get_articles(
+    limit: int = 20,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get articles with pagination."""
     result = await db.execute(
         select(
             Article,
@@ -22,6 +26,8 @@ async def get_articles(db: AsyncSession = Depends(get_db)):
         .outerjoin(Tweet, Tweet.article_id == Article.id)
         .group_by(Article.id)
         .order_by(Article.added_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
 
     articles = []
@@ -44,6 +50,13 @@ async def get_articles(db: AsyncSession = Depends(get_db)):
             )
         )
     return articles
+
+
+@router.get("/count")
+async def get_article_count(db: AsyncSession = Depends(get_db)):
+    """Get total article count for pagination."""
+    result = await db.execute(select(func.count(Article.id)))
+    return {"count": result.scalar() or 0}
 
 
 @router.get("/{article_id}", response_model=ArticleResponse)

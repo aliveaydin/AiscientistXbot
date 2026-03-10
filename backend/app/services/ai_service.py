@@ -370,31 +370,44 @@ Your background knowledge on this topic:
 
     async def generate_blog_post(
         self,
-        article: Article,
+        article: Article = None,
         tweet_content: Optional[str] = None,
         language: str = "en",
         model: Optional[str] = None,
+        topic: Optional[str] = None,
+        reference_context: Optional[str] = None,
     ) -> dict:
         """Generate a blog article using Kimi K2.5. Falls back to default AI if Kimi fails."""
         import logging
         logger = logging.getLogger("ai_service")
 
-        content = article.content[:8000] if len(article.content) > 8000 else article.content
-
-        user_prompt = f"""Source paper/article title: {article.title or article.filename}
-
-Source content:
-{content}
-"""
-        if tweet_content:
-            user_prompt += f"""
-Related tweet that was posted:
-"{tweet_content}"
-
-Write a detailed blog article analyzing this topic. The tweet above is a short summary you already posted; now write the full in-depth analysis. Reference the source paper by name. Include your own insights and inferences."""
+        if topic and not article:
+            user_prompt = f"Research topic: {topic}\n\n"
+            if reference_context:
+                user_prompt += f"Related papers from ArXiv:\n{reference_context}\n\n"
+            user_prompt += (
+                "Write a comprehensive, in-depth blog article about this research topic. "
+                "Reference the related papers where relevant. Provide your own analysis, insights, "
+                "current state of the field, key challenges, and future directions. "
+                "Make it informative for both researchers and educated readers."
+            )
+        elif article:
+            content = article.content[:8000] if len(article.content) > 8000 else article.content
+            user_prompt = f"Source paper/article title: {article.title or article.filename}\n\nSource content:\n{content}\n"
+            if tweet_content:
+                user_prompt += (
+                    f'\nRelated tweet that was posted:\n"{tweet_content}"\n\n'
+                    f"Write a detailed blog article analyzing this topic. The tweet above is a short summary "
+                    f"you already posted; now write the full in-depth analysis. Reference the source paper by name. "
+                    f"Include your own insights and inferences."
+                )
+            else:
+                user_prompt += (
+                    "\nWrite a detailed blog article analyzing this topic. Reference the source paper by name. "
+                    "Include specific technical details, your own analysis and inferences beyond what the paper states."
+                )
         else:
-            user_prompt += """
-Write a detailed blog article analyzing this topic. Reference the source paper by name. Include specific technical details, your own analysis and inferences beyond what the paper states."""
+            user_prompt = "Write a general blog post about recent advances in AI research."
 
         system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
 

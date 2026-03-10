@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from typing import Optional, List
 from app.database import get_db, async_session
 from app.models import ResearchProject, ProjectReference, AgentMessage, AgentWork, ResearchPaper, Article
 from app.schemas import (
@@ -9,6 +10,7 @@ from app.schemas import (
     ProjectReferenceResponse,
 )
 from app.services.lab_service import lab_service, AGENTS, PHASES
+from app.services.article_service import ArticleService
 
 router = APIRouter(prefix="/api/lab", tags=["Research Lab"])
 
@@ -129,6 +131,32 @@ async def get_project_references(project_id: int, db: AsyncSession = Depends(get
     """Get all reference papers linked to a project."""
     refs = await lab_service.get_project_references(db, project_id)
     return refs
+
+
+@router.post("/projects/{project_id}/upload-doc")
+async def upload_project_document(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a document and link it as a reference to a project."""
+    result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from pathlib import Path
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ArticleService.SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
+    content = await file.read()
+    article = await ArticleService.upload_article(db, file.filename, content)
+
+    db.add(ProjectReference(project_id=project_id, article_id=article.id))
+    await db.commit()
+
+    return {"success": True, "article_id": article.id, "title": article.title or article.filename}
 
 
 @router.delete("/projects/{project_id}")

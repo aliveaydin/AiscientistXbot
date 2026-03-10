@@ -4,7 +4,7 @@ import {
   Repeat2, MessageCircle, Eye, Bookmark, Check, X,
   ChevronDown, Wand2, BookOpen, FileText
 } from 'lucide-react';
-import { getTweets, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getArticles, generateBlogFromTweet, autoReplyTweet } from '../api';
+import { getTweets, getTweetCount, generateTweet, postTweet, regenerateTweet, deleteTweet, updateTweet, getAllArticles, generateBlogFromTweet, autoReplyTweet } from '../api';
 
 function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBlog, onAutoReply }) {
   const [editing, setEditing] = useState(false);
@@ -152,19 +152,28 @@ export default function TweetsPage() {
   const [filter, setFilter] = useState('');
   const [selectedArticle, setSelectedArticle] = useState('');
   const [selectedModel, setSelectedModel] = useState('kimi-k2.5');
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const PAGE_SIZE = 20;
+
+  useEffect(() => {
+    setPage(0);
+  }, [filter]);
 
   useEffect(() => {
     loadData();
-  }, [filter]);
+  }, [filter, page]);
 
   const loadData = async () => {
     try {
-      const [tweetsRes, articlesRes] = await Promise.all([
-        getTweets(filter || null),
-        getArticles(),
+      const [tweetsRes, countRes, articlesRes] = await Promise.all([
+        getTweets(filter || null, PAGE_SIZE, page * PAGE_SIZE),
+        getTweetCount(filter || null),
+        articles.length === 0 ? getAllArticles() : Promise.resolve({ data: articles }),
       ]);
       setTweets(tweetsRes.data);
-      setArticles(articlesRes.data);
+      setTotalCount(countRes.data.count);
+      if (articlesRes.data !== articles) setArticles(articlesRes.data);
     } catch (err) {
       console.error('Failed to load tweets:', err);
     } finally {
@@ -326,7 +335,7 @@ export default function TweetsPage() {
             {f || 'All'}
           </button>
         ))}
-        <span className="text-sm text-gray-500 ml-auto">{tweets.length} tweets</span>
+        <span className="text-sm text-gray-500 ml-auto">{totalCount} tweets</span>
       </div>
 
       {/* Tweet List */}
@@ -360,6 +369,28 @@ export default function TweetsPage() {
             <Send className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No tweets yet. Generate your first one above!</p>
           </div>
+        </div>
+      )}
+
+      {totalCount > PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => setPage(Math.max(0, page - 1))}
+            disabled={page === 0}
+            className="btn-secondary text-sm py-1.5 px-4 disabled:opacity-30"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-400">
+            Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+          </span>
+          <button
+            onClick={() => setPage(page + 1)}
+            disabled={(page + 1) * PAGE_SIZE >= totalCount}
+            className="btn-secondary text-sm py-1.5 px-4 disabled:opacity-30"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>

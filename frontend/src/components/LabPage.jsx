@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   FlaskConical, Plus, Play, FastForward, Trash2, RefreshCw,
   MessageSquare, User, FileText, ChevronRight, Download, Copy,
-  CheckCircle2, Circle, Loader2, AlertCircle
+  CheckCircle2, Circle, Loader2, AlertCircle, Upload
 } from 'lucide-react';
 import {
   getLabProjects, createLabProject, getLabProject, runLabPhase,
   runLabAllPhases, getLabChatboard, getLabAgentWork, getLabPaper,
-  getLabReferences, deleteLabProject
+  getLabReferences, uploadLabDoc, deleteLabProject
 } from '../api';
 
 const PHASES = ['brainstorm', 'discussion', 'decision', 'methodology', 'experiments', 'writing', 'review'];
@@ -163,7 +163,9 @@ export default function LabPage() {
   const [newTopic, setNewTopic] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => { loadProjects(); }, []);
   useEffect(() => { if (selectedId) loadProjectData(); }, [selectedId, activeTab]);
@@ -257,6 +259,24 @@ export default function LabPage() {
     }
   };
 
+  const handleUploadDoc = async (e) => {
+    const files = e.target.files;
+    if (!files.length || !selectedId) return;
+    setUploading(true);
+    try {
+      for (const file of files) {
+        await uploadLabDoc(selectedId, file);
+      }
+      await loadProjectData();
+      await loadProjects();
+    } catch (err) {
+      alert('Upload failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const handleDelete = async (id) => {
     if (!confirm('Delete this project and all its data?')) return;
     try {
@@ -304,11 +324,11 @@ export default function LabPage() {
               placeholder="Description (optional)..."
               className="input-field text-sm resize-none h-16"
             />
-            <input
+            <textarea
               value={newTopic}
               onChange={(e) => setNewTopic(e.target.value)}
-              placeholder="Research topic (optional, e.g. 'mixture of experts scaling')"
-              className="input-field text-sm"
+              placeholder="Research topic (optional). Can be keywords, a description, or even an abstract. ArXiv will be searched for related papers."
+              className="input-field text-sm resize-none h-16"
             />
             {newTopic && (
               <p className="text-xs text-cyan-400">Topic specified: ArXiv'dan 10+ ilgili paper aranacak.</p>
@@ -455,8 +475,30 @@ export default function LabPage() {
 
               {activeTab === 'refs' && (
                 <div className="space-y-2">
+                  <div className="flex items-center gap-2 mb-3">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.txt,.md,.docx,.doc"
+                      onChange={handleUploadDoc}
+                      className="hidden"
+                    />
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploading}
+                      className="btn-secondary text-sm py-1.5 px-3"
+                    >
+                      {uploading ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Uploading...</>
+                      ) : (
+                        <><Upload className="w-4 h-4" /> Upload Document</>
+                      )}
+                    </button>
+                    <span className="text-xs text-gray-500">{references.length} reference(s)</span>
+                  </div>
                   {references.length === 0 ? (
-                    <p className="text-gray-500 text-center py-12">No reference papers linked yet.</p>
+                    <p className="text-gray-500 text-center py-8">No reference papers linked yet. Upload documents or specify a topic.</p>
                   ) : (
                     references.map((ref) => (
                       <div key={ref.id} className="flex items-center justify-between p-3 bg-gray-900/50 border border-gray-800 rounded-lg">

@@ -133,32 +133,48 @@ class LabService:
         await db.flush()
         return work
 
-    async def _search_and_import_topic_papers(self, db: AsyncSession, project: ResearchProject, min_papers: int = 10):
-        """Search ArXiv for papers related to the project topic, import and link them."""
-        from app.services.arxiv_service import ArxivService
+    async def _extract_search_terms(self, topic: str) -> list:
+        """Use AI to extract concise ArXiv search terms from a topic description."""
+        from app.services.ai_service import ai_service
+        try:
+            prompt = (
+                f"Extract 4-6 concise academic search phrases from this research topic. "
+                f"Return ONLY a comma-separated list of short keyword phrases (2-4 words each) "
+                f"suitable for searching ArXiv. No numbering, no explanations.\n\n"
+                f"Topic: {topic}"
+            )
+            response = await ai_service._call_ai(
+                "You extract search keywords from research topics. Return only comma-separated phrases.",
+                prompt,
+            )
+            terms = [t.strip().strip('"').strip("'") for t in response.split(",") if t.strip()]
+            logger.info(f"[Lab] Extracted search terms: {terms}")
+            return terms[:6]
+        except Exception as e:
+            logger.warning(f"[Lab] AI keyword extraction failed, using fallback: {e}")
+            words = [w.strip() for w in topic.replace(",", " ").split() if len(w.strip()) > 2]
+            return [" ".join(words[i:i+2]) for i in range(0, min(len(words), 6), 2)] if words else [topic[:50]]
 
-        topic = project.topic
-        if not topic:
-            return
-
-        logger.info(f"[Lab] Searching ArXiv for topic: {topic}")
+    async def _search_arxiv_by_terms(self, search_terms: list, max_results: int = 30) -> list:
+        """Search ArXiv with extracted terms and return parsed entries."""
+        import httpx
+        import re
+        import xml.etree.ElementTree as ET
 
         category_filter = " OR ".join(f"cat:{cat}" for cat in [
             "cs.AI", "cs.LG", "cs.CL", "cs.CV", "cs.NE", "stat.ML",
         ])
-        keywords = [kw.strip() for kw in topic.replace(",", " ").split() if len(kw.strip()) > 2]
-        keyword_query = " AND ".join(f"all:{kw}" for kw in keywords[:5])
+        term_queries = [f'abs:"{term}"' for term in search_terms]
+        keyword_query = " OR ".join(term_queries)
         full_query = f"({keyword_query}) AND ({category_filter})"
 
-        import httpx
-        import re
-        import xml.etree.ElementTree as ET
+        logger.info(f"[Lab] ArXiv query: {full_query}")
 
         params = {
             "search_query": full_query,
             "sortBy": "relevance",
             "sortOrder": "descending",
-            "max_results": min_papers * 3,
+            "max_results": max_results,
         }
 
         try:
@@ -167,79 +183,98 @@ class LabService:
                 response.raise_for_status()
         except Exception as e:
             logger.error(f"[Lab] ArXiv search failed: {e}")
-            return
+            return []
 
         ns = {"atom": "http://www.w3.org/2005/Atom"}
         root = ET.fromstring(response.text)
 
-        existing = await db.execute(select(Article.arxiv_id).where(Article.arxiv_id.isnot(None)))
-        existing_ids = {row[0] for row in existing.fetchall()}
-
-        imported_count = 0
+        entries = []
         for entry in root.findall("atom:entry", ns):
-            if imported_count >= min_papers:
-                break
-
             arxiv_id_url = entry.find("atom:id", ns).text
             arxiv_id = arxiv_id_url.split("/abs/")[-1]
-
-            if arxiv_id in existing_ids:
-                art_result = await db.execute(select(Article).where(Article.arxiv_id == arxiv_id))
-                existing_art = art_result.scalar_one_or_none()
-                if existing_art:
-                    ref = ProjectReference(project_id=project.id, article_id=existing_art.id)
-                    db.add(ref)
-                    imported_count += 1
-                continue
-
             title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
             title = re.sub(r"\s+", " ", title)
             abstract = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
             abstract = re.sub(r"\s+", " ", abstract)
             categories = [cat.get("term") for cat in entry.findall("atom:category", ns)]
+            entries.append({
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "abstract": abstract,
+                "categories": categories,
+            })
 
-            pdf_link = None
-            for link in entry.findall("atom:link", ns):
-                if link.get("title") == "pdf":
-                    pdf_link = link.get("href")
+        logger.info(f"[Lab] ArXiv returned {len(entries)} results")
+        return entries
 
-            content = f"{title}\n\nAbstract:\n{abstract}"
+    async def _search_and_import_topic_papers(self, db: AsyncSession, project: ResearchProject, min_papers: int = 10):
+        """Search ArXiv for papers related to the project topic, import and link them."""
+        topic = project.topic
+        if not topic:
+            return
+
+        logger.info(f"[Lab] Searching ArXiv for topic: {topic}")
+
+        search_terms = await self._extract_search_terms(topic)
+        entries = await self._search_arxiv_by_terms(search_terms, max_results=min_papers * 3)
+
+        if len(entries) < min_papers:
+            fallback_terms = [topic[:60]]
+            extra = await self._search_arxiv_by_terms(fallback_terms, max_results=min_papers * 2)
+            seen_ids = {e["arxiv_id"] for e in entries}
+            for e in extra:
+                if e["arxiv_id"] not in seen_ids:
+                    entries.append(e)
+                    seen_ids.add(e["arxiv_id"])
+
+        existing = await db.execute(select(Article.arxiv_id).where(Article.arxiv_id.isnot(None)))
+        existing_ids = {row[0] for row in existing.fetchall()}
+
+        imported_count = 0
+        for entry in entries:
+            if imported_count >= min_papers:
+                break
+
+            arxiv_id = entry["arxiv_id"]
+
+            if arxiv_id in existing_ids:
+                art_result = await db.execute(select(Article).where(Article.arxiv_id == arxiv_id))
+                existing_art = art_result.scalar_one_or_none()
+                if existing_art:
+                    existing_ref = await db.execute(
+                        select(ProjectReference).where(
+                            ProjectReference.project_id == project.id,
+                            ProjectReference.article_id == existing_art.id,
+                        )
+                    )
+                    if not existing_ref.scalar_one_or_none():
+                        db.add(ProjectReference(project_id=project.id, article_id=existing_art.id))
+                        imported_count += 1
+                continue
+
+            content = f"{entry['title']}\n\nAbstract:\n{entry['abstract']}"
 
             article = Article(
                 filename=f"arxiv_{arxiv_id.replace('/', '_')}.pdf",
-                title=title,
+                title=entry["title"],
                 content=content,
                 file_type="pdf",
                 source="arxiv",
                 arxiv_id=arxiv_id,
                 arxiv_url=f"https://arxiv.org/abs/{arxiv_id}",
-                arxiv_categories=", ".join(categories),
+                arxiv_categories=", ".join(entry["categories"]),
                 is_processed=False,
             )
             db.add(article)
             await db.flush()
 
-            ref = ProjectReference(project_id=project.id, article_id=article.id)
-            db.add(ref)
+            db.add(ProjectReference(project_id=project.id, article_id=article.id))
             existing_ids.add(arxiv_id)
             imported_count += 1
-            logger.info(f"[Lab] Imported reference: {title[:60]}")
-
-        also_link = await db.execute(
-            select(Article).where(Article.arxiv_id.is_(None)).order_by(Article.added_at.desc()).limit(5)
-        )
-        for art in also_link.scalars().all():
-            existing_ref = await db.execute(
-                select(ProjectReference).where(
-                    ProjectReference.project_id == project.id,
-                    ProjectReference.article_id == art.id,
-                )
-            )
-            if not existing_ref.scalar_one_or_none():
-                db.add(ProjectReference(project_id=project.id, article_id=art.id))
+            logger.info(f"[Lab] Imported reference: {entry['title'][:60]}")
 
         await db.commit()
-        logger.info(f"[Lab] Total references linked: {imported_count}+ for project {project.id}")
+        logger.info(f"[Lab] Total references linked: {imported_count} for project {project.id}")
 
     async def _get_project_paper_context(self, db: AsyncSession, project: ResearchProject) -> str:
         """Get paper context specific to this project's references, or all papers if no references."""
@@ -305,11 +340,17 @@ class LabService:
 
             prompt = (
                 f"You are in a research lab brainstorming session.\n\n"
-                f"Here is a summary of reference papers:\n\n{ref_ctx}\n\n"
+                f"Reference papers (use as background knowledge, NOT to summarize):\n\n{ref_ctx}\n\n"
                 f"{topic_instruction}{prev_note}"
-                f"Based on these papers, propose 2-3 original research ideas. For each idea, provide:\n"
+                f"Propose 2-3 genuinely ORIGINAL research ideas that go BEYOND what these papers already do. "
+                f"Do NOT simply combine or extend existing work. Think about:\n"
+                f"- What fundamental questions remain unanswered?\n"
+                f"- What counter-intuitive hypotheses could be tested?\n"
+                f"- What cross-domain connections could yield breakthroughs?\n"
+                f"- What would change the field if proven true?\n\n"
+                f"For each idea, provide:\n"
                 f"1. Title\n2. Research question\n3. Why it matters (novelty/impact)\n4. Rough approach\n"
-                f"Be specific and creative. Draw connections across papers. Think about what gaps exist."
+                f"Be bold and creative. This is a research lab, we want NEW ideas, not surveys."
             )
             response = await self._call_agent(agent_key, agent["system_prompt"], prompt)
             await self._save_message(db, project.id, agent_key, response, "brainstorm", 1)

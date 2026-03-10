@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronUp, BookOpen, Hash, RefreshCw,
   ExternalLink, Star, Globe
 } from 'lucide-react';
-import { getArticles, uploadArticle, scanArticles, summarizeArticle, deleteArticle, fetchArxiv } from '../api';
+import { getArticles, getArticleCount, uploadArticle, scanArticles, summarizeArticle, deleteArticle, fetchArxiv } from '../api';
 
 export default function ArticlesPage() {
   const [articles, setArticles] = useState([]);
@@ -14,16 +14,23 @@ export default function ArticlesPage() {
   const [fetchingArxiv, setFetchingArxiv] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [summaries, setSummaries] = useState({});
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const PAGE_SIZE = 20;
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     loadArticles();
-  }, []);
+  }, [page]);
 
   const loadArticles = async () => {
     try {
-      const res = await getArticles();
+      const [res, countRes] = await Promise.all([
+        getArticles(PAGE_SIZE, page * PAGE_SIZE),
+        getArticleCount(),
+      ]);
       setArticles(res.data);
+      setTotalCount(countRes.data.count);
     } catch (err) {
       console.error('Failed to load articles:', err);
     } finally {
@@ -147,7 +154,7 @@ export default function ArticlesPage() {
           )}
         </button>
         <span className="text-sm text-gray-500 ml-auto">
-          {articles.length} articles ({articles.filter(a => a.source === 'arxiv').length} from ArXiv)
+          {totalCount} articles ({articles.filter(a => a.source === 'arxiv').length} from ArXiv on this page)
         </span>
       </div>
 
@@ -256,6 +263,28 @@ export default function ArticlesPage() {
             <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
             <p>No articles yet. Upload some or scan the articles directory!</p>
           </div>
+        </div>
+      )}
+
+      {totalCount > PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            onClick={() => setPage(Math.max(0, page - 1))}
+            disabled={page === 0}
+            className="btn-secondary text-sm py-1.5 px-4 disabled:opacity-30"
+          >
+            Previous
+          </button>
+          <span className="text-sm text-gray-400">
+            Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE)}
+          </span>
+          <button
+            onClick={() => setPage(page + 1)}
+            disabled={(page + 1) * PAGE_SIZE >= totalCount}
+            className="btn-secondary text-sm py-1.5 px-4 disabled:opacity-30"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>
