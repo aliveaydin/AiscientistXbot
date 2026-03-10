@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # AI Models
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "claude-sonnet-4-20250514")
+    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "kimi-k2.5")
 
     # Kimi API (for blog generation)
     kimi_api_key: str = os.getenv("KIMI_API_KEY", "")

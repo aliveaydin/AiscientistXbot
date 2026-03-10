@@ -244,14 +244,22 @@ class AIService:
         return response.choices[0].message.content.strip()
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
-        """Route to the right AI provider. Kimi is primary, Claude/OpenAI are fallbacks."""
+        """Route to the right AI provider. Kimi is always tried first for all tweet operations."""
         model = model or settings.default_ai_model
-        if self._is_kimi_model(model):
-            return await self._call_kimi(system_prompt, user_prompt)
-        elif self._is_claude_model(model):
+
+        if settings.kimi_api_key:
+            try:
+                return await self._call_kimi(system_prompt, user_prompt)
+            except Exception as e:
+                import logging
+                logging.getLogger("ai_service").warning(f"Kimi failed, trying fallback: {e}")
+
+        if self._is_claude_model(model) and settings.anthropic_api_key:
             return await self._call_claude(system_prompt, user_prompt, model)
-        else:
+        elif settings.openai_api_key:
             return await self._call_openai(system_prompt, user_prompt, model)
+        else:
+            raise RuntimeError("No AI provider available")
 
     async def generate_tweet(
         self,
