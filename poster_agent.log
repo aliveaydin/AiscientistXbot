@@ -1,0 +1,66 @@
+[02:24:32] 🤖 AiScientist Local Poster Agent başlatıldı!
+[02:24:32] 📡 VPS: http://89.167.114.236
+[02:24:32] ⏰ Kontrol aralığı: 120 saniye
+[02:24:32] 🐦 Twitter: @1201159163327524865...
+[02:24:32] ──────────────────────────────────────────────────
+[02:24:32] 🔐 Twitter bağlantısı test ediliyor...
+[02:24:54] ⚠️  Twitter erişilemedi: HTTPSConnectionPool(host='api.twitter.com', port=443): Read timed out. (read timeout=10)
+[02:24:54] 📡 VPS bağlantısı test ediliyor...
+[02:25:09] ❌ VPS erişilemedi: HTTPConnectionPool(host='89.167.114.236', port=80): Read timed out. (read timeout=10)
+[02:25:09] ──────────────────────────────────────────────────
+[02:25:09] 🔄 Bekleme döngüsü başlıyor...
+
+[02:25:20] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Read timed out. (read timeout=10)
+[05:03:55] 📬 2 bekleyen tweet bulundu
+[05:03:55] 📝 Tweet #124: Vision-language models leak their hallucination risk through...
+[05:03:55] ❌ Tweet #124 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[05:03:59] 📝 Tweet #125: Görsel-dil modelleri tek bir token üretmeden önce iç temsill...
+[05:03:59] ❌ Tweet #125 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[09:09:37] 📬 2 bekleyen tweet bulundu
+[09:09:37] 📝 Tweet #126: If we can measure a bias but can't explain it, we can still ...
+[09:09:38] ❌ Tweet #126 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[09:09:41] 📝 Tweet #127: Bir önyargıyı ölçebiliyorsak ama açıklayamıyorsak, etkisini ...
+[09:09:41] ❌ Tweet #127 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[12:31:12] 📬 2 bekleyen tweet bulundu
+[12:31:12] 📝 Tweet #128: Most fact-checkers rely on external retrieval, but this miss...
+[12:31:13] ❌ Tweet #128 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[12:31:16] 📝 Tweet #129: Çoğu fact-checker dış kaynaklara dayanır ama önemli bir nokt...
+[12:31:16] ❌ Tweet #129 gönderilemedi: 402: {"account_id":1847271227687067648,"title":"CreditsDepleted","detail":"Your enrolled account [1847271227687067648] does not have any credits to fulfill this request.","type":"https://api.twitter.com/2/
+[12:56:03] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 51] Network is unreachable"))
+[15:11:22] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 51] Network is unreachable"))
+[20:15:15] 📬 2 bekleyen tweet bulundu
+[20:15:15] 📝 Tweet #130: RoboPocket breaks the PhD bottleneck in robot learning. Inst...
+[20:15:15] ❌ Tweet #130 gönderilemedi: 503: {"title":"Service Unavailable","detail":"Service Unavailable","type":"about:blank","status":503}
+[20:15:19] 📝 Tweet #131: RoboPocket, robot öğrenmesindeki doktora darboğazını çözüyor...
+[20:15:19] ❌ Tweet #131 gönderilemedi: 503: {"title":"Service Unavailable","detail":"Service Unavailable","type":"about:blank","status":503}
+[22:53:48] 📬 1 bekleyen tweet bulundu
+[22:53:48] 📝 Tweet #131: If a model fixes its answer within the first 10% of computat...
+[22:53:48] ❌ Tweet #131 gönderilemedi: 503: {"title":"Service Unavailable","detail":"Service Unavailable","type":"about:blank","status":503}
+[13:11:20] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 51] Network is unreachable"))
+[01:19:06] 📬 1 bekleyen tweet bulundu
+[01:19:06] 📝 Tweet #139: The fundamental flaw in agent training has been conflating d...
+[01:19:07] ✅ Tweet #139 gönderildi! (Twitter ID: 2031495089134956584)
+[01:19:07] ✨ 1 tweet gönderildi!
+
+[16:44:15] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by ConnectTimeoutError(<HTTPConnection(host='89.167.114.236', port=80) at 0x101b7c270>, 'Connection to 89.167.114.236 timed out. (connect timeout=10)'))
+[16:46:25] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by ConnectTimeoutError(<HTTPConnection(host='89.167.114.236', port=80) at 0x101b7c5a0>, 'Connection to 89.167.114.236 timed out. (connect timeout=10)'))
+[16:48:35] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by ConnectTimeoutError(<HTTPConnection(host='89.167.114.236', port=80) at 0x101b7c8d0>, 'Connection to 89.167.114.236 timed out. (connect timeout=10)'))
+[01:40:43] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by ConnectTimeoutError(<HTTPConnection(host='89.167.114.236', port=80) at 0x101b7cc00>, 'Connection to 89.167.114.236 timed out. (connect timeout=10)'))
+[01:42:43] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 51] Network is unreachable"))
+[04:31:14] 📬 2 bekleyen tweet bulundu
+[04:31:14] 📝 Tweet #153: ...
+[04:31:14] ❌ Tweet #153 gönderilemedi: 400: {"errors":[{"message":"Please include either text or media in your Tweet."}],"title":"Invalid Request","detail":"One or more parameters to your request was invalid.","type":"https://api.twitter.com/2/
+[04:31:18] 📝 Tweet #154: ...
+[04:31:18] ❌ Tweet #154 gönderilemedi: 400: {"errors":[{"message":"Please include either text or media in your Tweet."}],"title":"Invalid Request","detail":"One or more parameters to your request was invalid.","type":"https://api.twitter.com/2/
+[04:51:24] 📬 1 bekleyen tweet bulundu
+[04:51:24] 📝 Tweet #153: The duality between slow and fast in meta RL reveals somethi...
+[04:51:24] ✅ Tweet #153 gönderildi! (Twitter ID: 2031910901951906250)
+[04:51:25] ✨ 1 tweet gönderildi!
+
+[04:53:25] 📬 1 bekleyen tweet bulundu
+[04:53:25] 📝 Tweet #154: Vision language models encode hand geometry to 6.1° accuracy...
+[04:53:25] ✅ Tweet #154 gönderildi! (Twitter ID: 2031911409143926927)
+[04:53:25] ✨ 1 tweet gönderildi!
+
+[05:37:32] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 61] Connection refused"))
+[05:39:32] ❌ VPS bağlantı hatası: HTTPConnectionPool(host='89.167.114.236', port=80): Max retries exceeded with url: /api/tweets/queue/pending (Caused by NewConnectionError("HTTPConnection(host='89.167.114.236', port=80): Failed to establish a new connection: [Errno 61] Connection refused"))
