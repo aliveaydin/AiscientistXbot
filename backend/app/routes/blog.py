@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from datetime import datetime
 from app.database import get_db
 from app.models import BlogPost, Tweet, Article
@@ -243,6 +243,19 @@ async def generate_blog_from_topic(data: dict, db: AsyncSession = Depends(get_db
         "papers_found": len(entries),
         "papers_imported": len(imported_ids),
     }
+
+
+@router.post("/publish-all-drafts")
+async def publish_all_drafts(db: AsyncSession = Depends(get_db)):
+    """Publish all draft blog posts at once."""
+    now = datetime.utcnow()
+    result = await db.execute(
+        update(BlogPost)
+        .where(BlogPost.status == "draft")
+        .values(status="published", published=True, published_at=now)
+    )
+    await db.commit()
+    return {"success": True, "published_count": result.rowcount}
 
 
 @router.delete("/{post_id}")

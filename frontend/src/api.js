@@ -69,6 +69,7 @@ export const getBlogPosts = (language = null, limit = 50) => {
 export const getBlogPost = (id) => api.get(`/blog/${id}`);
 export const updateBlogStatus = (id, status) => api.put(`/blog/${id}/status`, { status });
 export const deleteBlogPost = (id) => api.delete(`/blog/${id}`);
+export const publishAllDrafts = () => api.post('/blog/publish-all-drafts');
 export const generateBlogFromTweet = (tweetDbId) => api.post(`/blog/generate-from-tweet/${tweetDbId}`);
 export const generateBlogFromArticle = (articleId) => api.post(`/blog/generate-from-article/${articleId}`);
 export const generateBlogFromTopic = (topic) => api.post('/blog/generate-from-topic', { topic });

@@ -224,11 +224,16 @@ class SchedulerService:
                 if tweet:
                     try:
                         logger.info("Generating blog articles...")
+                        auto_pub = (await self._get_setting("auto_publish_blog", "true")).lower() == "true"
+                        pub_status = "published" if auto_pub else "draft"
+
                         en_blog = await ai_service.generate_blog_post(article, tweet_content, language="en", model=model)
                         blog_en = BlogPost(
                             tweet_id=tweet.id, article_id=article.id,
                             title=en_blog["title"], content=en_blog["content"],
-                            language="en", ai_model_used=en_blog.get("model", model), status="draft",
+                            language="en", ai_model_used=en_blog.get("model", model), status=pub_status,
+                            published=auto_pub,
+                            published_at=datetime.utcnow() if auto_pub else None,
                         )
                         db.add(blog_en)
 
@@ -236,7 +241,9 @@ class SchedulerService:
                         blog_tr = BlogPost(
                             tweet_id=tweet.id, article_id=article.id,
                             title=tr_blog["title"], content=tr_blog["content"],
-                            language="tr", ai_model_used=tr_blog.get("model", model), status="draft",
+                            language="tr", ai_model_used=tr_blog.get("model", model), status=pub_status,
+                            published=auto_pub,
+                            published_at=datetime.utcnow() if auto_pub else None,
                         )
                         db.add(blog_tr)
                         await db.commit()

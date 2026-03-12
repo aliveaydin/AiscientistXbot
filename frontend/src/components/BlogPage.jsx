@@ -3,7 +3,7 @@ import {
   BookOpen, Globe, ChevronDown, ChevronUp, ExternalLink, 
   Trash2, CheckCircle, Clock, Send, Copy, Filter, Sparkles, RefreshCw
 } from 'lucide-react';
-import { getBlogPosts, updateBlogStatus, deleteBlogPost, getAllArticles, generateBlogFromArticle, generateBlogFromTopic } from '../api';
+import { getBlogPosts, updateBlogStatus, deleteBlogPost, getAllArticles, generateBlogFromArticle, generateBlogFromTopic, publishAllDrafts } from '../api';
 
 export default function BlogPage() {
   const [posts, setPosts] = useState([]);
@@ -223,9 +223,26 @@ export default function BlogPage() {
             Turkish ({trPosts.length})
           </button>
         </div>
-        <span className="text-sm text-gray-500 ml-auto">
+        <span className="text-sm text-gray-500 ml-auto mr-2">
           {Object.keys(grouped).length} article pairs
         </span>
+        {posts.some(p => p.status === 'draft') && (
+          <button
+            onClick={async () => {
+              if (!confirm('Publish all draft blog posts to kualia.ai?')) return;
+              try {
+                const res = await publishAllDrafts();
+                alert(`Published ${res.data.published_count} blog posts!`);
+                await loadPosts();
+              } catch (err) {
+                alert('Failed: ' + (err.response?.data?.detail || err.message));
+              }
+            }}
+            className="btn-primary text-sm py-1.5 px-3"
+          >
+            <Globe className="w-3.5 h-3.5" /> Publish All Drafts
+          </button>
+        )}
       </div>
 
       {/* Info Box */}
