@@ -7,9 +7,30 @@ import {
   Boxes,
   BrainCircuit,
   Joystick,
+  FileText,
 } from "lucide-react";
+import { getPublicStats, getPublishedPapers, getPublishedBlog } from "@/lib/api";
 
-export default function Home() {
+export default async function Home() {
+  let stats = { papers: 0, blog_posts: 0, environments: 0 };
+  let latestPapers: any[] = [];
+  let latestBlog: any[] = [];
+
+  try {
+    [stats, latestPapers, latestBlog] = await Promise.all([
+      getPublicStats().catch(() => ({ papers: 0, blog_posts: 0, environments: 0 })),
+      getPublishedPapers(3, 0).then((r: any) => r.items || []).catch(() => []),
+      getPublishedBlog(3, 0).then((r: any) => r.items || []).catch(() => []),
+    ]);
+  } catch {
+    // graceful fallback
+  }
+
+  const latestItems = [
+    ...latestPapers.map((p: any) => ({ type: "paper", id: p.id, title: p.title, date: p.published_at || p.created_at, href: `/research/${p.id}` })),
+    ...latestBlog.filter((b: any) => b.language === "en").map((b: any) => ({ type: "blog", id: b.id, title: b.title, date: b.published_at || b.created_at, href: `/blog/${b.id}` })),
+  ].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 4);
+
   return (
     <div className="fade-in">
       {/* Hero */}
@@ -96,9 +117,9 @@ export default function Home() {
       {/* Numbers */}
       <section className="mx-auto max-w-6xl px-6 py-20 md:py-28">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-          <StatBlock label="Research Papers" value="—" />
-          <StatBlock label="RL Environments" value="—" />
-          <StatBlock label="Blog Articles" value="—" />
+          <StatBlock label="Research Papers" value={stats.papers > 0 ? String(stats.papers) : "—"} />
+          <StatBlock label="RL Environments" value={stats.environments > 0 ? String(stats.environments) : "—"} />
+          <StatBlock label="Blog Articles" value={stats.blog_posts > 0 ? String(stats.blog_posts) : "—"} />
           <StatBlock label="Open Source" value="100%" />
         </div>
       </section>
@@ -139,12 +160,45 @@ export default function Home() {
             View all <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>
-        <div className="border border-[#1a1a1a] rounded-lg p-8 text-center">
-          <Boxes className="w-8 h-8 text-[#333] mx-auto mb-3" />
-          <p className="text-[#666] text-sm">
-            Content will appear here as research and articles are published.
-          </p>
-        </div>
+
+        {latestItems.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {latestItems.map((item) => (
+              <Link
+                key={`${item.type}-${item.id}`}
+                href={item.href}
+                className="group border border-[#1a1a1a] rounded-lg p-5 hover:border-[#333] hover:bg-[#0a0a0a] transition-all"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-md border border-[#222] flex items-center justify-center text-[#666] group-hover:text-white group-hover:border-[#444] transition-colors flex-shrink-0 mt-0.5">
+                    {item.type === "paper" ? <FileText className="w-4 h-4" /> : <BookOpen className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[10px] font-mono uppercase tracking-wider text-[#555]">
+                      {item.type === "paper" ? "Research" : "Blog"}
+                    </span>
+                    <h3 className="text-sm font-medium text-white mt-0.5 line-clamp-2 group-hover:text-[#e5e5e5]">
+                      {item.title}
+                    </h3>
+                    {item.date && (
+                      <time className="text-xs text-[#555] mt-1 block">
+                        {new Date(item.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })}
+                      </time>
+                    )}
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-[#333] group-hover:text-[#888] transition-colors flex-shrink-0 mt-1" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="border border-[#1a1a1a] rounded-lg p-8 text-center">
+            <Boxes className="w-8 h-8 text-[#333] mx-auto mb-3" />
+            <p className="text-[#666] text-sm">
+              Content will appear here as research and articles are published.
+            </p>
+          </div>
+        )}
       </section>
     </div>
   );
