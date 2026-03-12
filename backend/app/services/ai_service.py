@@ -414,7 +414,7 @@ Your background knowledge on this topic:
         if settings.kimi_api_key:
             try:
                 logger.info(f"Generating {language.upper()} blog with Kimi K2.5")
-                result = await self._call_kimi(system, user_prompt)
+                result = await self._call_kimi(system, user_prompt, max_tokens=4096)
                 lines = result.strip().split("\n", 1)
                 title = lines[0].strip().lstrip("#").strip()
                 body = lines[1].strip() if len(lines) > 1 else result
