@@ -232,7 +232,18 @@ class AIService:
             temperature=1,
             max_tokens=max_tokens,
         )
-        return response.choices[0].message.content.strip()
+        raw = response.choices[0].message.content
+        if raw is None:
+            return ""
+        text = raw.strip()
+        if text.startswith('"') and text.endswith('"'):
+            text = text[1:-1].strip()
+        if text.startswith("```") and "```" in text[3:]:
+            text = text.split("```")[1]
+            if text.startswith("text\n"):
+                text = text[5:]
+            text = text.strip()
+        return text
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
         """Route to the right AI provider. Kimi is always tried first for all tweet operations."""
@@ -260,8 +271,10 @@ class AIService:
         previous_tweets: Optional[List[str]] = None,
     ) -> str:
         """Generate a tweet from an article, optionally avoiding repetition."""
-        # Truncate content if too long
-        content = article.content[:4000] if len(article.content) > 4000 else article.content
+        raw = article.content or article.summary or ""
+        if not raw.strip():
+            raise ValueError("Article has no content or summary. Cannot generate tweet.")
+        content = raw[:4000] if len(raw) > 4000 else raw
 
         # Pick a random angle for variety
         angle = random.choice(TWEET_ANGLES)
@@ -287,7 +300,14 @@ IMPORTANT: The following tweets were already posted on this topic. Write somethi
 
         system = TWEET_SYSTEM_PROMPT
 
-        return await self._call_ai(system, user_prompt, model)
+        result = await self._call_ai(system, user_prompt, model)
+        if not result or len(result.strip()) < 30:
+            import logging
+            logging.getLogger("ai_service").warning(f"Tweet generation returned empty/short ({len(result or '')} chars), retrying once")
+            result = await self._call_ai(system, user_prompt, model)
+        if not result or len(result.strip()) < 30:
+            raise ValueError("AI returned empty or too-short tweet. Try a different article or try again.")
+        return result
 
     async def generate_thread(
         self,

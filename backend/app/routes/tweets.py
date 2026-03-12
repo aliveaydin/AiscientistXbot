@@ -74,9 +74,19 @@ async def generate_tweet(
         if not article:
             raise HTTPException(status_code=404, detail="No articles available")
 
-    tweet_content = await ai_service.generate_tweet(
-        article, model=request.ai_model, custom_prompt=request.custom_prompt
-    )
+    try:
+        tweet_content = await ai_service.generate_tweet(
+            article, model=request.ai_model, custom_prompt=request.custom_prompt
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    tweet_content = (tweet_content or "").strip()
+    if not tweet_content or len(tweet_content) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail="Tweet generation returned empty. Please try again or select a different article.",
+        )
 
     if len(tweet_content) > 800:
         tweet_content = tweet_content[:797] + "..."
