@@ -82,6 +82,8 @@ class BlogPost(Base):
     language = Column(String(10), default="en")
     ai_model_used = Column(String(50), nullable=False)
     status = Column(String(50), default="draft")  # draft, published
+    published = Column(Boolean, default=False)
+    published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     tweet = relationship("Tweet")
@@ -178,6 +180,29 @@ class ResearchPaper(Base):
     content = Column(Text, nullable=False)
     status = Column(String(50), default="draft")  # draft, under_review, revision, final
     version = Column(Integer, default=1)
+    published = Column(Boolean, default=False)
+    published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     project = relationship("ResearchProject", back_populates="papers")
+
+
+class RLEnvironment(Base):
+    __tablename__ = "rl_environments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    category = Column(String(100), default="custom")  # robotics, locomotion, manipulation, navigation, custom
+    observation_space = Column(Text, nullable=True)  # JSON description
+    action_space = Column(Text, nullable=True)  # JSON description
+    reward_description = Column(Text, nullable=True)
+    code = Column(Text, nullable=True)  # Python environment code
+    preview_image = Column(Text, nullable=True)  # base64 or URL
+    difficulty = Column(String(50), default="medium")  # easy, medium, hard, expert
+    status = Column(String(50), default="draft")  # draft, published
+    ai_model_used = Column(String(50), nullable=True)
+    topic = Column(Text, nullable=True)  # user-provided topic for generation
+    published_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
