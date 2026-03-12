@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from datetime import datetime
 from typing import Optional, List
 from app.database import get_db, async_session
 from app.models import ResearchProject, ProjectReference, AgentMessage, AgentWork, ResearchPaper, Article
@@ -157,6 +158,38 @@ async def upload_project_document(
     await db.commit()
 
     return {"success": True, "article_id": article.id, "title": article.title or article.filename}
+
+
+@router.post("/projects/{project_id}/paper/publish")
+async def publish_paper(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Publish a research paper to the public website."""
+    result = await db.execute(
+        select(ResearchPaper).where(ResearchPaper.project_id == project_id).order_by(ResearchPaper.version.desc())
+    )
+    paper = result.scalar_one_or_none()
+    if not paper:
+        raise HTTPException(status_code=404, detail="No paper found for this project")
+
+    paper.published = True
+    paper.published_at = datetime.utcnow()
+    await db.commit()
+    return {"success": True, "paper_id": paper.id, "title": paper.title}
+
+
+@router.post("/projects/{project_id}/paper/unpublish")
+async def unpublish_paper(project_id: int, db: AsyncSession = Depends(get_db)):
+    """Unpublish a research paper from the public website."""
+    result = await db.execute(
+        select(ResearchPaper).where(ResearchPaper.project_id == project_id).order_by(ResearchPaper.version.desc())
+    )
+    paper = result.scalar_one_or_none()
+    if not paper:
+        raise HTTPException(status_code=404, detail="No paper found for this project")
+
+    paper.published = False
+    paper.published_at = None
+    await db.commit()
+    return {"success": True}
 
 
 @router.delete("/projects/{project_id}")

@@ -7,7 +7,8 @@ import {
 import {
   getLabProjects, createLabProject, getLabProject, runLabPhase,
   runLabAllPhases, getLabChatboard, getLabAgentWork, getLabPaper,
-  getLabReferences, uploadLabDoc, deleteLabProject
+  getLabReferences, uploadLabDoc, deleteLabProject,
+  publishLabPaper, unpublishLabPaper
 } from '../api';
 
 const PHASES = ['brainstorm', 'discussion', 'decision', 'methodology', 'experiments', 'writing', 'review'];
@@ -108,12 +109,32 @@ function WorkItem({ work }) {
   );
 }
 
-function PaperView({ paper }) {
+function PaperView({ paper, projectId }) {
+  const [publishing, setPublishing] = useState(false);
+  const [isPublished, setIsPublished] = useState(paper?.published || false);
+
   if (!paper) return <div className="text-gray-500 text-center py-12">Paper not generated yet. Complete the Writing phase first.</div>;
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(paper.content);
     alert('Paper copied to clipboard (Markdown)');
+  };
+
+  const handlePublishToggle = async () => {
+    setPublishing(true);
+    try {
+      if (isPublished) {
+        await unpublishLabPaper(projectId);
+        setIsPublished(false);
+      } else {
+        await publishLabPaper(projectId);
+        setIsPublished(true);
+      }
+    } catch (err) {
+      alert('Failed: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setPublishing(false);
+    }
   };
 
   return (
@@ -127,11 +148,25 @@ function PaperView({ paper }) {
               paper.status === 'revision' ? 'bg-yellow-500/20 text-yellow-400' :
               'bg-gray-500/20 text-gray-400'
             }`}>{paper.status} v{paper.version}</span>
+            {isPublished && (
+              <span className="text-xs px-2 py-0.5 rounded font-medium bg-blue-500/20 text-blue-400">
+                Published on kualia.ai
+              </span>
+            )}
           </div>
         </div>
-        <button onClick={copyToClipboard} className="btn-secondary text-sm py-1.5 px-3">
-          <Copy className="w-4 h-4" /> Copy Markdown
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePublishToggle}
+            disabled={publishing}
+            className={`text-sm py-1.5 px-3 ${isPublished ? 'btn-secondary' : 'btn-primary'}`}
+          >
+            {publishing ? <Loader2 className="w-4 h-4 animate-spin" /> : isPublished ? 'Unpublish' : 'Publish to kualia.ai'}
+          </button>
+          <button onClick={copyToClipboard} className="btn-secondary text-sm py-1.5 px-3">
+            <Copy className="w-4 h-4" /> Copy Markdown
+          </button>
+        </div>
       </div>
       {paper.abstract && (
         <div className="bg-gray-800/50 rounded-lg p-4">
@@ -543,7 +578,7 @@ export default function LabPage() {
                 </div>
               )}
 
-              {activeTab === 'paper' && <PaperView paper={paper} />}
+              {activeTab === 'paper' && <PaperView paper={paper} projectId={selectedId} />}
             </div>
           </>
         )}

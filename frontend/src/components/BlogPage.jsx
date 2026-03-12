@@ -231,8 +231,9 @@ export default function BlogPage() {
       {/* Info Box */}
       <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
         <p className="text-sm text-purple-300">
-          <strong>How it works:</strong> For each tweet the bot generates, it also writes an in-depth blog article (EN + TR). 
-          Click "Copy" to copy the markdown content, then paste it into X Articles to publish.
+          <strong>How it works:</strong> Blog articles are generated from tweets or topics. 
+          Mark as <strong>Published</strong> to make them appear on <strong>kualia.ai/blog</strong>. 
+          You can also copy the markdown to publish elsewhere.
         </p>
       </div>
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from datetime import datetime
 from app.database import get_db
 from app.models import BlogPost, Tweet, Article
 from app.services.ai_service import ai_service
@@ -46,6 +47,8 @@ async def get_blog_posts(
             "language": p.language,
             "ai_model_used": p.ai_model_used,
             "status": p.status,
+            "published": p.published if hasattr(p, 'published') else False,
+            "published_at": p.published_at.isoformat() if hasattr(p, 'published_at') and p.published_at else None,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "tweet_content": tweet_content,
             "article_title": article_title,
@@ -102,9 +105,16 @@ async def update_blog_status(
     if not post:
         raise HTTPException(status_code=404, detail="Blog post not found")
 
-    post.status = data.get("status", post.status)
+    new_status = data.get("status", post.status)
+    post.status = new_status
+    if new_status == "published":
+        post.published = True
+        post.published_at = datetime.utcnow()
+    else:
+        post.published = False
+        post.published_at = None
     await db.commit()
-    return {"success": True, "status": post.status}
+    return {"success": True, "status": post.status, "published": post.published}
 
 
 @router.post("/generate-from-tweet/{tweet_db_id}")

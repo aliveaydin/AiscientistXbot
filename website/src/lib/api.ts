@@ -1,7 +1,15 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const SERVER_API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+function getBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return SERVER_API;
+  }
+  return "";
+}
 
 async function fetchAPI(path: string) {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const base = getBaseUrl();
+  const res = await fetch(`${base}${path}`, {
     next: { revalidate: 300 },
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);

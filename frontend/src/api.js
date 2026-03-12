@@ -93,6 +93,17 @@ export const uploadLabDoc = (projectId, file) => {
   });
 };
 export const deleteLabProject = (id) => api.delete(`/lab/projects/${id}`);
+export const publishLabPaper = (id) => api.post(`/lab/projects/${id}/paper/publish`);
+export const unpublishLabPaper = (id) => api.post(`/lab/projects/${id}/paper/unpublish`);
+
+// RL Environments
+export const getRLEnvironments = () => api.get('/rl-envs/');
+export const generateRLEnvironment = (data) => api.post('/rl-envs/generate', data);
+export const createRLEnvironment = (data) => api.post('/rl-envs/create', data);
+export const updateRLEnvironment = (id, data) => api.put(`/rl-envs/${id}`, data);
+export const publishRLEnvironment = (id) => api.post(`/rl-envs/${id}/publish`);
+export const unpublishRLEnvironment = (id) => api.post(`/rl-envs/${id}/unpublish`);
+export const deleteRLEnvironment = (id) => api.delete(`/rl-envs/${id}`);
 
 // Settings
 export const getSettings = () => api.get('/settings/');
