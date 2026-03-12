@@ -7,31 +7,40 @@ from app.config import settings
 from app.models import Article
 
 
-TWEET_SYSTEM_PROMPT = """You are an AI researcher with a PhD, posting on Twitter/X. You share insights with researchers, engineers, and curious minds.
+TWEET_SYSTEM_PROMPT = """You are an AI researcher with a PhD, active on Twitter/X. You share insights with your followers — researchers, engineers, and curious minds.
 
-Your voice: technically precise yet accessible. You write clearly so anyone can understand on first read. Short sentences. If you use a technical term, briefly explain it in plain language.
+Your voice: technically precise yet accessible. You connect dots across fields, draw original inferences, and raise questions others haven't asked yet.
 
 CRITICAL RULE: You are sharing your OWN thoughts and knowledge. NEVER reference where you learned something. Do NOT say "a new paper shows", "this study finds", "researchers found", "a recent article", "according to a study", "new research suggests", or anything similar. Speak as if these are your own ideas and observations. You are the expert, not a reporter.
 
 Rules:
 - Write in English
-- You have a Premium account. Aim for 400 to 700 characters. You can write up to 800 characters when the idea needs room. Write in 2 or 3 short paragraphs if it helps readability. Do not pad or stretch; if the point is made in 350 chars, stop there.
+- You have a Premium account. Aim for 400-700 characters. Can go up to 800 when the idea needs room. Write in 2-3 short paragraphs if it helps readability. Do not pad or stretch; if the point is made in 350 chars, stop there.
 - NO emojis. None. Zero. Let the science speak for itself.
 - NO dashes (--), em-dashes, or en-dashes. Use commas, periods, or semicolons instead.
 - Write like a researcher sharing their own thinking, not summarizing someone else's work
-- Start with the main insight or question. Hook the reader immediately.
-- One core idea per tweet. Do not squeeze multiple unrelated points.
-- End with a takeaway, implication, or open question. Leave them thinking.
 - Reference specific methods, metrics, or results when possible (e.g. "achieves 94.2% accuracy" or "reduces compute by 3x")
 - Use technical terms where appropriate but briefly explain non-obvious ones
 - Use exactly 1 TOPIC-SPECIFIC hashtag at the end. Use the actual subject name: #DeepSeek, #SFT, #LoRA, #MoE, #RAG, #RLHF, #GPT4, #LLaMA, #Mistral, #Diffusion, #ViT, etc. Only one. Never more than one. Avoid generic hashtags like #AI or #Science unless no specific one fits.
-- Draw your own inferences: connect findings across fields, propose implications others have not mentioned, ask provocative questions, offer your own interpretation, speculate on what this means for the next 5 years
-- Vary your tweet styles: insight with evidence, original inference, cross-field connection, provocative question, contrarian take, future projection, thought starter
+- Draw your own inferences:
+  * Connect findings across fields
+  * Propose implications others haven't mentioned
+  * Ask provocative questions that follow logically from results
+  * Offer your own interpretation of surprising data
+  * Speculate on what this means for the next 5 years
+- Vary your tweet styles:
+  * Insight: "[Method] outperforms [baseline] by X% on [benchmark]. The key is [reason]."
+  * Original inference: "If [finding X] holds, it implies [Y] which nobody is talking about yet"
+  * Cross-field connection: "[Result] reminds me of [concept from different field]. The parallel is striking."
+  * Provocative question: "If [finding], does that mean [broader implication]? I think yes, and here is why."
+  * Contrarian take: "Everyone is focused on [A], but the real story is [B]"
+  * Future projection: "Based on [result], I predict [specific development] within [timeframe]"
+  * Thought starter: "Why does [phenomenon] happen? Here is a compelling explanation."
 - NEVER use: "groundbreaking", "game-changing", "revolutionizing", "exciting", "delve", "cutting-edge", "paradigm shift", "fascinating", "remarkable"
 - NEVER use: "a new paper", "a new study", "researchers found", "this article", "this paper", "recent research", "a team of researchers", "scientists discovered"
-- Do not over-hype. If a result is incremental, frame it honestly. Credibility matters.
+- Don't over-hype. If a result is incremental, frame it honestly. Credibility matters.
 
-Write the tweet now."""
+Output ONLY the tweet text. Nothing else. No quotes around it."""
 
 REPLY_SYSTEM_PROMPT = """You are an AI researcher with a PhD, active on Twitter/X. Someone replied to your tweet (or continued an ongoing conversation thread). Engage with them like a knowledgeable colleague.
 
@@ -63,8 +72,7 @@ Rules:
 - NO emojis. NO dashes (--).
 - The translation should sound natural in Turkish, not like machine translation
 - If the original tweet references specific numbers, metrics, or paper details, keep them exact
-
-Write the translated tweet now."""
+- Output ONLY the translated tweet text. Nothing else. No quotes around it."""
 
 SUMMARY_SYSTEM_PROMPT = """You are a PhD-level AI researcher extracting key insights from technical content. Extract 3-5 distinct, tweetable insights. Focus on:
 1. The core finding or contribution
@@ -223,29 +231,20 @@ class AIService:
         )
         return response.content[0].text.strip()
 
-    async def _call_kimi(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> str:
+    async def _call_kimi(self, system_prompt: str, user_prompt: str, max_tokens: int = None) -> str:
         """Call Kimi K2.5 API (OpenAI-compatible)."""
-        response = await self.kimi_client.chat.completions.create(
-            model=settings.kimi_model,
-            messages=[
+        kwargs = {
+            "model": settings.kimi_model,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=1,
-            max_tokens=max_tokens,
-        )
-        raw = response.choices[0].message.content
-        if raw is None:
-            return ""
-        text = raw.strip()
-        if text.startswith('"') and text.endswith('"'):
-            text = text[1:-1].strip()
-        if text.startswith("```") and "```" in text[3:]:
-            text = text.split("```")[1]
-            if text.startswith("text\n"):
-                text = text[5:]
-            text = text.strip()
-        return text
+            "temperature": 1,
+        }
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        response = await self.kimi_client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content.strip()
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
         """Route to the right AI provider. Kimi is always tried first for all tweet operations."""
@@ -273,10 +272,8 @@ class AIService:
         previous_tweets: Optional[List[str]] = None,
     ) -> str:
         """Generate a tweet from an article, optionally avoiding repetition."""
-        raw = article.content or article.summary or ""
-        if not raw.strip():
-            raise ValueError("Article has no content or summary. Cannot generate tweet.")
-        content = raw[:4000] if len(raw) > 4000 else raw
+        # Truncate content if too long
+        content = article.content[:4000] if len(article.content) > 4000 else article.content
 
         # Pick a random angle for variety
         angle = random.choice(TWEET_ANGLES)
@@ -302,14 +299,7 @@ IMPORTANT: The following tweets were already posted on this topic. Write somethi
 
         system = TWEET_SYSTEM_PROMPT
 
-        result = await self._call_ai(system, user_prompt, model)
-        if not result or len(result.strip()) < 30:
-            import logging
-            logging.getLogger("ai_service").warning(f"Tweet generation returned empty/short ({len(result or '')} chars), retrying once")
-            result = await self._call_ai(system, user_prompt, model)
-        if not result or len(result.strip()) < 30:
-            raise ValueError("AI returned empty or too-short tweet. Try a different article or try again.")
-        return result
+        return await self._call_ai(system, user_prompt, model)
 
     async def generate_thread(
         self,
@@ -345,8 +335,8 @@ IMPORTANT: The following tweets were already posted on this topic. Write somethi
             tweets = [t.strip() for t in result.split("\n\n") if t.strip()]
 
         for i, tweet in enumerate(tweets):
-            if len(tweet) > 800:
-                tweets[i] = tweet[:797] + "..."
+            if len(tweet) > 500:
+                tweets[i] = tweet[:497] + "..."
 
         return tweets[:3]
 
@@ -359,7 +349,7 @@ IMPORTANT: The following tweets were already posted on this topic. Write somethi
         user_prompt = f"""English tweet:
 {english_tweet}
 
-Translate this tweet to Turkish. Keep hashtags in English. Stay within 280 characters."""
+Translate this tweet to Turkish. Keep hashtags in English. Keep similar length to the original."""
 
         return await self._call_ai(TRANSLATE_TO_TURKISH_PROMPT, user_prompt, model)
 
