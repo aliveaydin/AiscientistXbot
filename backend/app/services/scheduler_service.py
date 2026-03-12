@@ -55,8 +55,8 @@ class SchedulerService:
         tweet_content = await ai_service.generate_tweet(
             article, model=model, previous_tweets=previous_tweets
         )
-        if len(tweet_content) > 500:
-            tweet_content = tweet_content[:497] + "..."
+        if len(tweet_content) > 800:
+            tweet_content = tweet_content[:797] + "..."
 
         tweet = Tweet(
             content=tweet_content, article_id=article.id, ai_model_used=model,
@@ -83,8 +83,8 @@ class SchedulerService:
         # TR translation
         try:
             tr_content = await ai_service.translate_tweet_to_turkish(tweet_content, model=model)
-            if len(tr_content) > 500:
-                tr_content = tr_content[:497] + "..."
+            if len(tr_content) > 800:
+                tr_content = tr_content[:797] + "..."
             tr_tweet = Tweet(
                 content=tr_content, article_id=article.id, ai_model_used=model,
                 status="queued", language="tr", parent_tweet_db_id=tweet.id,
@@ -171,8 +171,8 @@ class SchedulerService:
         try:
             for i, en_tweet in enumerate(thread_tweets):
                 tr_content = await ai_service.translate_tweet_to_turkish(en_tweet.content, model=model)
-                if len(tr_content) > 500:
-                    tr_content = tr_content[:497] + "..."
+                if len(tr_content) > 800:
+                    tr_content = tr_content[:797] + "..."
                 tr_tweet = Tweet(
                     content=tr_content, article_id=article.id, ai_model_used=model,
                     status="queued", language="tr", parent_tweet_db_id=en_tweet.id,
@@ -466,8 +466,8 @@ class SchedulerService:
                         model=model,
                     )
 
-                    if len(reply_text) > 500:
-                        reply_text = reply_text[:497] + "..."
+                    if len(reply_text) > 800:
+                        reply_text = reply_text[:797] + "..."
 
                     # Save reply to DB
                     reply = Reply(

@@ -27,7 +27,7 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
                 className="input-field resize-none h-24"
-                maxLength={500}
+                maxLength={800}
               />
               <div className="flex items-center gap-2">
                 <button onClick={handleSave} className="btn-success text-sm py-1.5 px-3">
@@ -36,8 +36,8 @@ function TweetCard({ tweet, onPost, onRegenerate, onDelete, onEdit, onGenerateBl
                 <button onClick={() => setEditing(false)} className="btn-secondary text-sm py-1.5 px-3">
                   <X className="w-4 h-4" /> Cancel
                 </button>
-                <span className={`text-xs ${editContent.length > 500 ? 'text-red-400' : 'text-gray-500'}`}>
-                  {editContent.length}/500
+                <span className={`text-xs ${editContent.length > 800 ? 'text-red-400' : 'text-gray-500'}`}>
+                  {editContent.length}/800
                 </span>
               </div>
             </div>
