@@ -246,21 +246,27 @@ class AIService:
         response = await self.kimi_client.chat.completions.create(**kwargs)
         return response.choices[0].message.content.strip()
 
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Remove surrogate characters that can't be encoded to UTF-8."""
+        return text.encode("utf-8", errors="replace").decode("utf-8")
+
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
         """Route to the right AI provider. Kimi is always tried first for all tweet operations."""
         model = model or settings.default_ai_model
 
         if settings.kimi_api_key:
             try:
-                return await self._call_kimi(system_prompt, user_prompt)
+                result = await self._call_kimi(system_prompt, user_prompt)
+                return self._sanitize_text(result)
             except Exception as e:
                 import logging
                 logging.getLogger("ai_service").warning(f"Kimi failed, trying fallback: {e}")
 
         if self._is_claude_model(model) and settings.anthropic_api_key:
-            return await self._call_claude(system_prompt, user_prompt, model)
+            return self._sanitize_text(await self._call_claude(system_prompt, user_prompt, model))
         elif settings.openai_api_key:
-            return await self._call_openai(system_prompt, user_prompt, model)
+            return self._sanitize_text(await self._call_openai(system_prompt, user_prompt, model))
         else:
             raise RuntimeError("No AI provider available")
 
