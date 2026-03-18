@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { Menu, X } from "lucide-react";
+import { useAuth, useUser, SignInButton, UserButton } from "@clerk/nextjs";
 
 const links = [
   { href: "/create", label: "Builder" },
@@ -15,6 +16,7 @@ const links = [
 export function Navbar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const { isSignedIn, isLoaded } = useAuth();
 
   return (
     <nav className="border-b border-[#1a1a1a] bg-black/80 backdrop-blur-md sticky top-0 z-50">
@@ -40,6 +42,37 @@ export function Navbar() {
           ))}
         </div>
 
+        <div className="hidden md:flex items-center gap-4">
+          {isLoaded && !isSignedIn && (
+            <SignInButton mode="modal">
+              <button className="text-sm text-[#888] hover:text-white transition-colors">
+                Sign In
+              </button>
+            </SignInButton>
+          )}
+          {isLoaded && isSignedIn && (
+            <>
+              <Link
+                href="/dashboard"
+                className={`text-sm transition-colors ${
+                  pathname.startsWith("/dashboard")
+                    ? "text-white"
+                    : "text-[#888] hover:text-white"
+                }`}
+              >
+                Dashboard
+              </Link>
+              <UserButton
+                appearance={{
+                  elements: {
+                    avatarBox: "w-8 h-8",
+                  },
+                }}
+              />
+            </>
+          )}
+        </div>
+
         <button
           className="md:hidden text-[#888] hover:text-white"
           onClick={() => setOpen(!open)}
@@ -63,6 +96,33 @@ export function Navbar() {
               {l.label}
             </Link>
           ))}
+          <div className="pt-3 border-t border-[#1a1a1a]">
+            {isLoaded && !isSignedIn && (
+              <SignInButton mode="modal">
+                <button className="text-sm text-[#888] hover:text-white">
+                  Sign In
+                </button>
+              </SignInButton>
+            )}
+            {isLoaded && isSignedIn && (
+              <>
+                <Link
+                  href="/dashboard"
+                  onClick={() => setOpen(false)}
+                  className="block text-sm text-[#888] hover:text-white mb-3"
+                >
+                  Dashboard
+                </Link>
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: "w-8 h-8",
+                    },
+                  }}
+                />
+              </>
+            )}
+          </div>
         </div>
       )}
     </nav>

@@ -23,3 +23,5 @@ numpy>=1.26.0
 matplotlib>=3.8.0
 gymnasium>=0.29.0
 stable-baselines3>=2.3.0
+PyJWT>=2.8.0
+cryptography>=42.0.0

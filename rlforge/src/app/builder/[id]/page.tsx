@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import {
   ArrowLeft, Send, Loader2, CheckCircle, XCircle,
@@ -22,6 +23,7 @@ type RightTab = "dashboard" | "code" | "agent" | "history" | "docs";
 
 export default function BuilderPage() {
   const { id } = useParams();
+  const { getToken } = useAuth();
   const envId = Number(id);
   const [env, setEnv] = useState<any>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,7 +48,8 @@ export default function BuilderPage() {
     const msg = input.trim(); setInput(""); setLoading(true);
     setMessages(p => [...p, { id: Date.now(), role: "user", content: msg, version_snapshot: null, created_at: new Date().toISOString() }]);
     try {
-      const data = await builderChat(envId, msg);
+      const token = await getToken();
+      const data = await builderChat(envId, msg, token);
       const isQuestion = data.mode === "question";
       setMessages(p => [...p, { id: Date.now()+1, role: "assistant", content: JSON.stringify({ mode: data.mode, change_summary: data.change_summary, breaking_changes: data.breaking_changes, test_results: data.test_results }), version_snapshot: data.version, created_at: new Date().toISOString() }]);
       if (!isQuestion) { await fetchEnv(); await fetchVersions(); }
@@ -176,6 +179,7 @@ function formatSteps(n: number): string {
 }
 
 function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; onStatusChange: (s: any) => void }) {
+  const { getToken } = useAuth();
   const [config, setConfig] = useState({ algorithm: "auto", total_timesteps: 10000, learning_rate: "" });
   const [status, setStatus] = useState<any>(null);
   const [curve, setCurve] = useState<any[]>([]);
@@ -220,7 +224,8 @@ function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; on
       if (config.algorithm !== "auto") cfg.algorithm = config.algorithm;
       if (config.learning_rate) cfg.learning_rate = parseFloat(config.learning_rate);
       if (isContinue) cfg.continue_from = true;
-      const r = await startTraining(envId, cfg);
+      const token = await getToken();
+      const r = await startTraining(envId, cfg, token);
       setStatus(r); onStatusChange(r); setCurve([]); setReplay([]);
     } catch (e: any) { setStatus({ status: "failed", error: e.message }); } finally { setTrainLoading(false); }
   }

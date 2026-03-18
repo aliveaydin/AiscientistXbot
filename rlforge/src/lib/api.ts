@@ -58,11 +58,14 @@ export async function getTemplates() {
 export async function generateEnv(
   description: string,
   domain?: string,
-  difficulty?: string
+  difficulty?: string,
+  token?: string | null
 ) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return fetchAPI("/api/rlforge/generate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ description, domain, difficulty }),
   });
 }
@@ -71,10 +74,12 @@ export async function getBuilderHistory(envId: number) {
   return fetchAPI(`/api/rlforge/builder/${envId}/history`);
 }
 
-export async function builderChat(envId: number, message: string) {
+export async function builderChat(envId: number, message: string, token?: string | null) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return fetchAPI(`/api/rlforge/builder/${envId}/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ message }),
   });
 }
@@ -102,18 +107,22 @@ export async function getResearchProject(id: number) {
   return fetchAPI(`/api/rlforge/research/projects/${id}`);
 }
 
-export async function createResearchProject(title: string, description?: string, topic?: string) {
+export async function createResearchProject(title: string, description?: string, topic?: string, token?: string | null) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return fetchAPI("/api/rlforge/research/projects", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ title, description, topic }),
   });
 }
 
-export async function startTraining(envId: number, config?: Record<string, unknown>) {
+export async function startTraining(envId: number, config?: Record<string, unknown>, token?: string | null) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return fetchAPI(`/api/rlforge/train/${envId}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(config || {}),
   });
 }
@@ -168,4 +177,52 @@ export async function getPublicPapers(limit = 20, offset = 0) {
 
 export async function getPublicStats() {
   return fetchAPI("/api/public/stats", { revalidate: 600 });
+}
+
+// --- Authenticated User API ---
+
+export async function authFetch(path: string, token: string, options: FetchOptions = {}) {
+  return fetchAPI(path, {
+    ...options,
+    headers: {
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
+export async function syncUser(token: string, data: Record<string, string>) {
+  return authFetch("/api/users/sync", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getMe(token: string) {
+  return authFetch("/api/users/me", token);
+}
+
+export async function updateMe(token: string, data: Record<string, string>) {
+  return authFetch("/api/users/me", token, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getMyEnvironments(token: string, limit = 50, offset = 0) {
+  return authFetch(`/api/users/me/environments?limit=${limit}&offset=${offset}`, token);
+}
+
+export async function getMyTraining(token: string, limit = 50, offset = 0) {
+  return authFetch(`/api/users/me/training?limit=${limit}&offset=${offset}`, token);
+}
+
+export async function getMyResearch(token: string, limit = 50, offset = 0) {
+  return authFetch(`/api/users/me/research?limit=${limit}&offset=${offset}`, token);
+}
+
+export async function getPublicProfile(username: string) {
+  return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
 }

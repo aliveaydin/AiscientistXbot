@@ -109,6 +109,23 @@ class ActivityLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    clerk_id = Column(String(200), unique=True, nullable=False, index=True)
+    email = Column(String(500), nullable=True)
+    username = Column(String(200), unique=True, nullable=True, index=True)
+    display_name = Column(String(500), nullable=True)
+    avatar_url = Column(Text, nullable=True)
+    bio = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    environments = relationship("RLEnvironment", back_populates="owner", foreign_keys="RLEnvironment.user_id")
+    research_projects = relationship("ResearchProject", back_populates="owner", foreign_keys="ResearchProject.user_id")
+
+
 class ResearchProject(Base):
     __tablename__ = "research_projects"
 
@@ -120,9 +137,11 @@ class ResearchProject(Base):
     current_phase = Column(String(50), default="brainstorm")
     selected_idea = Column(Text, nullable=True)
     revision_count = Column(Integer, default=0)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    owner = relationship("User", back_populates="research_projects", foreign_keys=[user_id])
     messages = relationship("AgentMessage", back_populates="project", cascade="all, delete-orphan")
     works = relationship("AgentWork", back_populates="project", cascade="all, delete-orphan")
     papers = relationship("ResearchPaper", back_populates="project", cascade="all, delete-orphan")
@@ -212,10 +231,12 @@ class RLEnvironment(Base):
     domain = Column(String(100), nullable=True)
     max_steps = Column(Integer, default=1000)
     api_enabled = Column(Boolean, default=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    owner = relationship("User", back_populates="environments", foreign_keys=[user_id])
     builder_conversations = relationship("BuilderConversation", back_populates="environment", cascade="all, delete-orphan")
     training_runs = relationship("TrainingRun", back_populates="environment", cascade="all, delete-orphan")
     versions = relationship("EnvVersion", back_populates="environment", cascade="all, delete-orphan")

@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 
 from app.database import init_db
-from app.routes import dashboard, tweets, articles, settings_route, blog, lab, public, rl_envs, rlforge
+from app.routes import dashboard, tweets, articles, settings_route, blog, lab, public, rl_envs, rlforge, users
 from app.services.scheduler_service import scheduler_service
 from app.services.article_service import ArticleService
 from app.services.training_service import TrainingService
@@ -133,6 +133,7 @@ app.include_router(lab.router)
 app.include_router(public.router)
 app.include_router(rl_envs.router)
 app.include_router(rlforge.router)
+app.include_router(users.router)
 
 # Serve frontend static files - check multiple possible locations
 frontend_candidates = [

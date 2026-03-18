@@ -1,11 +1,13 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { Loader2, Plus } from "lucide-react";
 import { createResearchProject } from "@/lib/api";
 
 export function CreateProjectForm() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -16,7 +18,8 @@ export function CreateProjectForm() {
     if (!title.trim()) return;
     setLoading(true);
     try {
-      const data = await createResearchProject(title.trim(), description, topic);
+      const token = await getToken();
+      const data = await createResearchProject(title.trim(), description, topic, token);
       router.push(`/research/${data.id}`);
     } catch {
       setLoading(false);

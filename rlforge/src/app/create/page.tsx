@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { Loader2, CheckCircle, XCircle, ArrowRight } from "lucide-react";
 import { generateEnv } from "@/lib/api";
 
@@ -17,6 +18,7 @@ const PROGRESS_STEPS = [
 
 export default function CreatePage() {
   const router = useRouter();
+  const { getToken } = useAuth();
   const [description, setDescription] = useState("");
   const [domain, setDomain] = useState("auto");
   const [difficulty, setDifficulty] = useState("medium");
@@ -53,10 +55,12 @@ export default function CreatePage() {
     setResult(null);
 
     try {
+      const token = await getToken();
       const data = await generateEnv(
         description.trim(),
         domain === "auto" ? undefined : domain,
         difficulty,
+        token,
       );
       setResult(data);
     } catch (e: any) {

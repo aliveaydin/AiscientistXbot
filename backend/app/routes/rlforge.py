@@ -11,8 +11,9 @@ from sqlalchemy import select, desc, func, or_
 from app.database import get_db
 from app.models import (
     RLEnvironment, BuilderConversation, TrainingRun,
-    EnvVersion, SkillCache,
+    EnvVersion, SkillCache, User,
 )
+from app.auth import get_optional_user
 from app.services.architect_service import architect_service
 from app.services.sandbox_runner import sandbox_runner
 from app.services.training_service import training_service
@@ -22,6 +23,18 @@ from app.services.paper_parser import paper_parser
 logger = logging.getLogger("rlforge_api")
 
 router = APIRouter(prefix="/api/rlforge", tags=["RLForge"])
+
+
+async def _resolve_user_id(db: AsyncSession, auth_user: Optional[dict]) -> Optional[int]:
+    """Resolve Clerk user to internal user_id. Returns None if no auth."""
+    if not auth_user:
+        return None
+    clerk_id = auth_user.get("clerk_user_id")
+    if not clerk_id:
+        return None
+    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
+    user = result.scalar_one_or_none()
+    return user.id if user else None
 
 
 def _slugify(text: str) -> str:
@@ -130,7 +143,11 @@ async def list_templates(db: AsyncSession = Depends(get_db)):
 # ──────────────────────────────────────────────────
 
 @router.post("/generate")
-async def generate_env(data: dict, db: AsyncSession = Depends(get_db)):
+async def generate_env(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    auth_user: Optional[dict] = Depends(get_optional_user),
+):
     description = data.get("description", "").strip()
     domain = data.get("domain")
     difficulty = data.get("difficulty", "medium")
@@ -169,6 +186,8 @@ async def generate_env(data: dict, db: AsyncSession = Depends(get_db)):
     if existing.scalar_one_or_none():
         slug_base = f"{slug_base}-{int(datetime.utcnow().timestamp())}"
 
+    user_id = await _resolve_user_id(db, auth_user)
+
     env = RLEnvironment(
         name=gen.get("name", description[:100]),
         slug=slug_base,
@@ -187,6 +206,7 @@ async def generate_env(data: dict, db: AsyncSession = Depends(get_db)):
         topic=description,
         generation_log="\n".join(log_lines),
         max_steps=gen.get("env_spec", {}).get("max_episode_steps", 1000),
+        user_id=user_id,
     )
     db.add(env)
     await db.commit()
@@ -221,7 +241,12 @@ async def get_env_detail(env_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/fork/{env_id}")
-async def fork_env(env_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+async def fork_env(
+    env_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    auth_user: Optional[dict] = Depends(get_optional_user),
+):
     result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
     source = result.scalar_one_or_none()
     if not source:
@@ -249,6 +274,8 @@ async def fork_env(env_id: int, data: dict, db: AsyncSession = Depends(get_db)):
 
     test_results = await sandbox_runner.run_all_tests(code) if code else {"passed": 0, "failed": 8, "total": 8, "tests": []}
 
+    fork_user_id = await _resolve_user_id(db, auth_user)
+
     forked = RLEnvironment(
         name=f"{source.name} (fork)",
         slug=slug,
@@ -267,6 +294,7 @@ async def fork_env(env_id: int, data: dict, db: AsyncSession = Depends(get_db)):
         topic=f"Fork of {source.name}: {modifications}" if modifications else f"Fork of {source.name}",
         generation_log=summary,
         max_steps=source.max_steps,
+        user_id=fork_user_id,
     )
     db.add(forked)
     await db.commit()
@@ -865,7 +893,11 @@ async def list_sessions():
 # ──────────────────────────────────────────────────
 
 @router.post("/generate-from-paper")
-async def generate_from_paper(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+async def generate_from_paper(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    auth_user: Optional[dict] = Depends(get_optional_user),
+):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Only PDF files are accepted")
 
@@ -886,6 +918,8 @@ async def generate_from_paper(file: UploadFile = File(...), db: AsyncSession = D
     if existing.scalar_one_or_none():
         slug = f"{slug}-{int(datetime.utcnow().timestamp())}"
 
+    paper_user_id = await _resolve_user_id(db, auth_user)
+
     env = RLEnvironment(
         name=result.get("name", "Paper Environment"),
         slug=slug,
@@ -903,6 +937,7 @@ async def generate_from_paper(file: UploadFile = File(...), db: AsyncSession = D
         ai_model_used="kimi-k2.5",
         topic=f"From paper: {file.filename}",
         generation_log=f"Generated from uploaded paper: {file.filename}",
+        user_id=paper_user_id,
     )
     db.add(env)
     await db.commit()
@@ -925,7 +960,11 @@ async def generate_from_paper(file: UploadFile = File(...), db: AsyncSession = D
 # ──────────────────────────────────────────────────
 
 @router.post("/research/projects")
-async def create_research_project(data: dict, db: AsyncSession = Depends(get_db)):
+async def create_research_project(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    auth_user: Optional[dict] = Depends(get_optional_user),
+):
     from app.models import ResearchProject
     from app.services.lab_service import lab_service
 
@@ -933,12 +972,15 @@ async def create_research_project(data: dict, db: AsyncSession = Depends(get_db)
     if not title:
         raise HTTPException(400, "title is required")
 
+    research_user_id = await _resolve_user_id(db, auth_user)
+
     project = ResearchProject(
         title=title,
         description=data.get("description", ""),
         topic=data.get("topic", ""),
         status="active",
         current_phase="brainstorm",
+        user_id=research_user_id,
     )
     db.add(project)
     await db.commit()
