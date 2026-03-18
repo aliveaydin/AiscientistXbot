@@ -1,10 +1,15 @@
+import json
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from datetime import datetime
 from app.database import get_db
 from app.models import RLEnvironment
-from app.services.rl_service import rl_service
+from app.services.architect_service import architect_service
+from app.services.sandbox_runner import sandbox_runner
+
+logger = logging.getLogger("rl_envs")
 
 router = APIRouter(prefix="/api/rl-envs", tags=["RL Environments"])
 
@@ -36,29 +41,51 @@ async def list_environments(db: AsyncSession = Depends(get_db)):
 
 @router.post("/generate")
 async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
-    """AI-generate an RL environment from a topic/description."""
+    """AI-generate an RL environment using architect_service + sandbox tests + fix loop."""
     topic = data.get("topic", "").strip()
     category = data.get("category", "custom")
     difficulty = data.get("difficulty", "medium")
     if not topic:
         raise HTTPException(status_code=400, detail="Topic is required")
 
-    result = await rl_service.generate_environment(topic, category, difficulty)
+    log_lines = [f"[start] Generating env: {topic[:100]}..."]
+
+    gen = await architect_service.generate_env_code(topic, domain=category, difficulty=difficulty)
+    code = gen.get("code", "")
+    spec_json = json.dumps(gen.get("env_spec", {}))
+    log_lines.append(f"[code] Generated {len(code)} chars of code")
+
+    test_results = await sandbox_runner.run_all_tests(code)
+    log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed")
+
+    max_fix_attempts = 2 if test_results["passed"] < 6 else 1
+    attempts = 0
+    while test_results["failed"] > 0 and attempts < max_fix_attempts:
+        attempts += 1
+        log_lines.append(f"[fix] Attempt {attempts}: fixing {test_results['failed']} failed tests")
+        fixed_code = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results))
+        if fixed_code and fixed_code != code:
+            code = fixed_code
+            test_results = await sandbox_runner.run_all_tests(code)
+            log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed after fix {attempts}")
+        else:
+            log_lines.append(f"[fix] No change from fix attempt {attempts}")
+            break
 
     auto_publish = data.get("auto_publish", True)
     status = "published" if auto_publish else "draft"
 
     env = RLEnvironment(
-        name=result["name"],
-        description=result["description"],
+        name=gen.get("name", topic[:100]),
+        description=gen.get("description", topic),
         category=category,
-        observation_space=result.get("observation_space", ""),
-        action_space=result.get("action_space", ""),
-        reward_description=result.get("reward_description", ""),
-        code=result.get("code", ""),
+        observation_space=gen.get("observation_space", ""),
+        action_space=gen.get("action_space", ""),
+        reward_description=gen.get("reward_description", ""),
+        code=code,
         difficulty=difficulty,
         status=status,
-        ai_model_used=result.get("model", "kimi-k2.5"),
+        ai_model_used="kimi-k2.5",
         topic=topic,
         published_at=datetime.utcnow() if auto_publish else None,
     )
@@ -66,12 +93,18 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(env)
 
+    logger.info("Generated env %d (%s): %s/%s tests passed",
+                env.id, env.name, test_results["passed"], test_results["total"])
+
     return {
         "id": env.id,
         "name": env.name,
         "description": env.description,
         "category": env.category,
         "status": env.status,
+        "tests_passed": test_results["passed"],
+        "tests_total": test_results["total"],
+        "generation_log": "\n".join(log_lines),
     }
 
 
