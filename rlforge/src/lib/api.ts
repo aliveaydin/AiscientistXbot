@@ -11,11 +11,12 @@ async function fetchAPI(path: string, options: FetchOptions = {}) {
   const { revalidate = 60, ...init } = options;
   const url = `${API_BASE}${path}`;
   const isServer = typeof window === "undefined";
-  const fetchOpts: RequestInit & { next?: { revalidate: number } } = { ...init };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fetchOpts: any = { ...init };
   if (isServer && (!init.method || init.method === "GET")) {
     fetchOpts.next = { revalidate };
   } else {
-    (fetchOpts as any).cache = "no-store";
+    fetchOpts.cache = "no-store";
   }
   const res = await fetch(url, fetchOpts);
   if (!res.ok) {
