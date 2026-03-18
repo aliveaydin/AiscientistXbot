@@ -192,17 +192,85 @@ class RLEnvironment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(500), nullable=False)
+    slug = Column(String(200), unique=True, nullable=True)
     description = Column(Text, nullable=True)
-    category = Column(String(100), default="custom")  # robotics, locomotion, manipulation, navigation, custom
-    observation_space = Column(Text, nullable=True)  # JSON description
-    action_space = Column(Text, nullable=True)  # JSON description
+    category = Column(String(100), default="custom")
+    observation_space = Column(Text, nullable=True)
+    action_space = Column(Text, nullable=True)
     reward_description = Column(Text, nullable=True)
-    code = Column(Text, nullable=True)  # Python environment code
-    preview_image = Column(Text, nullable=True)  # base64 or URL
-    difficulty = Column(String(50), default="medium")  # easy, medium, hard, expert
-    status = Column(String(50), default="draft")  # draft, published
+    code = Column(Text, nullable=True)
+    env_spec_json = Column(Text, nullable=True)
+    test_results_json = Column(Text, nullable=True)
+    preview_image = Column(Text, nullable=True)
+    difficulty = Column(String(50), default="medium")
+    status = Column(String(50), default="draft")
     ai_model_used = Column(String(50), nullable=True)
-    topic = Column(Text, nullable=True)  # user-provided topic for generation
+    topic = Column(Text, nullable=True)
+    version = Column(Integer, default=1)
+    generation_log = Column(Text, nullable=True)
+    is_template = Column(Boolean, default=False)
+    domain = Column(String(100), nullable=True)
+    max_steps = Column(Integer, default=1000)
+    api_enabled = Column(Boolean, default=True)
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    builder_conversations = relationship("BuilderConversation", back_populates="environment", cascade="all, delete-orphan")
+    training_runs = relationship("TrainingRun", back_populates="environment", cascade="all, delete-orphan")
+    versions = relationship("EnvVersion", back_populates="environment", cascade="all, delete-orphan")
+
+
+class BuilderConversation(Base):
+    __tablename__ = "builder_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    env_id = Column(Integer, ForeignKey("rl_environments.id"), nullable=False)
+    role = Column(String(50), nullable=False)  # user, assistant, system
+    content = Column(Text, nullable=False)
+    version_snapshot = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    environment = relationship("RLEnvironment", back_populates="builder_conversations")
+
+
+class TrainingRun(Base):
+    __tablename__ = "training_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    env_id = Column(Integer, ForeignKey("rl_environments.id"), nullable=False)
+    algorithm = Column(String(50), nullable=False)  # PPO, DQN, SAC
+    status = Column(String(50), default="pending")  # pending, running, completed, failed
+    config_json = Column(Text, nullable=True)
+    results_json = Column(Text, nullable=True)
+    model_path = Column(String(500), nullable=True)
+    training_curve_json = Column(Text, nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    environment = relationship("RLEnvironment", back_populates="training_runs")
+
+
+class EnvVersion(Base):
+    __tablename__ = "env_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    env_id = Column(Integer, ForeignKey("rl_environments.id"), nullable=False)
+    version = Column(Integer, nullable=False)
+    code = Column(Text, nullable=True)
+    spec_json = Column(Text, nullable=True)
+    change_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    environment = relationship("RLEnvironment", back_populates="versions")
+
+
+class SkillCache(Base):
+    __tablename__ = "skill_cache"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain_key = Column(String(200), unique=True, nullable=False)
+    skill_prompt = Column(Text, nullable=False)
+    usage_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
