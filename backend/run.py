@@ -6,10 +6,10 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 if __name__ == "__main__":
-    is_production = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RENDER") or os.getenv("FLY_APP_NAME")
     port = int(os.getenv("PORT", "8000"))
+    is_docker = os.path.exists("/.dockerenv")
 
-    if is_production:
+    if is_docker:
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",

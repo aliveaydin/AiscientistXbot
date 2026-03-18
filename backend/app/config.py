@@ -34,12 +34,12 @@ class Settings(BaseSettings):
     cf_worker_url: str = os.getenv("CF_WORKER_URL", "")
     cf_worker_secret: str = os.getenv("CF_WORKER_SECRET", "aiscientist-bot-2024")
 
-    # Persistent storage — use /app/data on Railway (Volume mount), fallback to local
-    data_dir: str = os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else ".")
-    articles_dir: str = os.getenv("ARTICLES_DIR", os.path.join(os.getenv("DATA_DIR", "./data" if os.getenv("RAILWAY_ENVIRONMENT") else "."), "articles"))
+    # Persistent storage
+    data_dir: str = os.getenv("DATA_DIR", "./data")
+    articles_dir: str = os.getenv("ARTICLES_DIR", os.path.join(os.getenv("DATA_DIR", "./data"), "articles"))
 
-    # Database — store in data_dir for persistence
-    database_url: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{os.path.join(os.getenv('DATA_DIR', './data' if os.getenv('RAILWAY_ENVIRONMENT') else '.'), 'bot.db')}")
+    # Database
+    database_url: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{os.path.join(os.getenv('DATA_DIR', './data'), 'bot.db')}")
 
     class Config:
         env_file = ".env"
