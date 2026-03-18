@@ -297,6 +297,8 @@ class ArxivService:
                 logger.warning(f"Failed to parse PDF for {paper['arxiv_id']}: {e}, using abstract")
                 content = f"{paper['title']}\n\nAbstract:\n{paper['abstract']}"
 
+            content = content.encode("utf-8", errors="replace").decode("utf-8")
+
             article = Article(
                 filename=filename,
                 title=paper["title"],

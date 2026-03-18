@@ -117,6 +117,7 @@ class ArticleService:
                 if not content:
                     continue
 
+                content = content.encode("utf-8", errors="replace").decode("utf-8")
                 title = cls.extract_title(content, filename)
                 article = Article(
                     filename=filename,
