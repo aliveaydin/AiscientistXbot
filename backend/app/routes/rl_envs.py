@@ -45,6 +45,9 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
 
     result = await rl_service.generate_environment(topic, category, difficulty)
 
+    auto_publish = data.get("auto_publish", True)
+    status = "published" if auto_publish else "draft"
+
     env = RLEnvironment(
         name=result["name"],
         description=result["description"],
@@ -54,9 +57,10 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
         reward_description=result.get("reward_description", ""),
         code=result.get("code", ""),
         difficulty=difficulty,
-        status="draft",
+        status=status,
         ai_model_used=result.get("model", "kimi-k2.5"),
         topic=topic,
+        published_at=datetime.utcnow() if auto_publish else None,
     )
     db.add(env)
     await db.commit()
@@ -67,7 +71,7 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
         "name": env.name,
         "description": env.description,
         "category": env.category,
-        "status": "draft",
+        "status": env.status,
     }
 
 

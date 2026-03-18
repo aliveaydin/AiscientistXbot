@@ -27,8 +27,8 @@ COPY backend/ ./
 # Copy built frontend
 COPY --from=frontend-build /app/frontend/dist ./frontend_dist
 
-# Create persistent data directory (mount Railway Volume here)
-RUN mkdir -p /app/data/articles
+# Create persistent data directories
+RUN mkdir -p /app/data/articles /app/data/trained_models
 
 # Environment
 ENV PYTHONUNBUFFERED=1

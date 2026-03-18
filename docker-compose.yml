@@ -17,16 +17,16 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db
       - FRONTEND_DIST_DIR=./frontend_dist
 
-  website:
+  rlforge:
     build:
       context: .
-      dockerfile: Dockerfile.website
+      dockerfile: Dockerfile.rlforge
       args:
         NEXT_PUBLIC_API_URL: http://bot:8000
-    container_name: kualia-website
+    container_name: kualia-platform
     restart: always
     expose:
-      - "3000"
+      - "3001"
     depends_on:
       - bot
 
@@ -40,7 +40,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - bot
-      - website
+      - rlforge
 
 volumes:
   bot-data:

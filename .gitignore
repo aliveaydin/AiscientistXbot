@@ -16,6 +16,8 @@ node_modules/
 frontend/dist/
 website/.next/
 website/out/
+rlforge/.next/
+rlforge/out/
 
 # IDE
 .vscode/
@@ -29,3 +31,12 @@ Thumbs.db
 # Articles (user content)
 backend/articles/*.pdf
 backend/articles/*.docx
+
+# Backend data
+backend/data/
+
+# Logs
+*.log
+
+# Production env
+.env.production
