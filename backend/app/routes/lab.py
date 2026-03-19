@@ -20,7 +20,10 @@ async def _resolve_user_id(db: AsyncSession, auth_user: Optional[dict]) -> Optio
     if not auth_user:
         return None
     from app.models import User
-    result = await db.execute(select(User).where(User.clerk_id == auth_user["sub"]))
+    clerk_id = auth_user.get("clerk_user_id") or auth_user.get("sub")
+    if not clerk_id:
+        return None
+    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
     user = result.scalar_one_or_none()
     return user.id if user else None
 
