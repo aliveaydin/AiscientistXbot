@@ -13,7 +13,7 @@ from app.models import (
     RLEnvironment, BuilderConversation, TrainingRun,
     EnvVersion, SkillCache, User,
 )
-from app.auth import get_optional_user
+from app.auth import get_optional_user, get_current_user
 from app.services.architect_service import architect_service
 from app.services.sandbox_runner import sandbox_runner
 from app.services.training_service import training_service
@@ -1117,3 +1117,159 @@ async def upload_paper_to_project(project_id: int, file: UploadFile = File(...),
     await db.commit()
 
     return {"article_id": article.id, "title": article.title, "project_id": project_id}
+
+
+# ── GitHub Export ─────────────────────────────────────────
+
+@router.post("/github/push/{env_id}")
+async def github_push(
+    env_id: int,
+    body: dict,
+    auth: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Push environment code to a new GitHub repository using the user's connected GitHub account."""
+    import base64
+    import httpx
+
+    clerk_user_id = auth["clerk_user_id"]
+    repo_name = body.get("repo_name", f"rl-env-{env_id}")
+    description = body.get("description", "")
+    is_private = body.get("private", False)
+
+    result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(404, "Environment not found")
+
+    clerk_secret = os.getenv("CLERK_SECRET_KEY", "")
+    if not clerk_secret:
+        raise HTTPException(500, "Server configuration error")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Get GitHub OAuth token from Clerk
+        resp = await client.get(
+            f"https://api.clerk.com/v1/users/{clerk_user_id}/oauth_access_tokens/github",
+            headers={"Authorization": f"Bearer {clerk_secret}"},
+        )
+        if resp.status_code != 200:
+            raise HTTPException(400, "GitHub not connected. Sign in with GitHub first.")
+        tokens = resp.json()
+        if not tokens:
+            raise HTTPException(400, "No GitHub account connected. Sign in with GitHub to use this feature.")
+        github_token = tokens[0]["token"]
+
+    gh_headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        user_resp = await client.get("https://api.github.com/user", headers=gh_headers)
+        if user_resp.status_code != 200:
+            raise HTTPException(400, "GitHub token invalid. Try reconnecting your GitHub account.")
+        gh_username = user_resp.json()["login"]
+
+        repo_resp = await client.post(
+            "https://api.github.com/user/repos",
+            headers=gh_headers,
+            json={"name": repo_name, "description": description, "private": is_private, "auto_init": False},
+        )
+        if repo_resp.status_code == 422:
+            raise HTTPException(409, f"Repository '{repo_name}' already exists on GitHub.")
+        if repo_resp.status_code not in (200, 201):
+            raise HTTPException(400, f"Failed to create repository: {repo_resp.text}")
+        repo_url = repo_resp.json()["html_url"]
+
+        files = _prepare_github_files(env)
+
+        for i, (path, content) in enumerate(files.items()):
+            content_b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+            put_resp = await client.put(
+                f"https://api.github.com/repos/{gh_username}/{repo_name}/contents/{path}",
+                headers=gh_headers,
+                json={"message": f"Add {path}" if i > 0 else "Initial commit from kualia.ai", "content": content_b64},
+            )
+            if put_resp.status_code not in (200, 201):
+                logger.warning("Failed to push %s: %s", path, put_resp.text)
+
+    return {"url": repo_url, "repo": f"{gh_username}/{repo_name}"}
+
+
+def _prepare_github_files(env) -> dict:
+    """Build the set of files to push to the GitHub repo."""
+    slug = env.slug or f"env_{env.id}"
+    safe_class = slug.replace("-", "_").title().replace("_", "") + "Env"
+    spec = json.loads(env.env_spec_json) if env.env_spec_json else {}
+    obs_type = spec.get("observation_space", {}).get("type", "Box")
+    act_type = spec.get("action_space", {}).get("type", "Discrete")
+    max_steps = spec.get("episode", {}).get("max_steps", 1000)
+
+    files = {}
+
+    files[f"{slug.replace('-', '_')}.py"] = env.code or "# Environment code\n"
+
+    files["requirements.txt"] = "gymnasium>=0.29.0\nnumpy>=1.24.0\nstable-baselines3>=2.1.0\n"
+
+    files["train.py"] = f'''"""Training script for {env.name}"""
+from stable_baselines3 import PPO
+import gymnasium as gym
+
+# Register and create environment
+from {slug.replace("-", "_")} import *
+
+env_id = "custom/{slug}-v0"
+try:
+    env = gym.make(env_id)
+except:
+    # Fallback: instantiate directly
+    env = {safe_class}()
+
+model = PPO("MlpPolicy", env, verbose=1, n_steps=2048, batch_size=64)
+model.learn(total_timesteps=50_000)
+model.save("{slug.replace("-", "_")}_ppo")
+print("Training complete! Model saved.")
+'''
+
+    files["README.md"] = f"""# {env.name}
+
+{env.description or "A custom RL environment."}
+
+## Specifications
+
+| Property | Value |
+|----------|-------|
+| Domain | {env.domain or "general"} |
+| Difficulty | {env.difficulty or "medium"} |
+| Observation Space | {obs_type} |
+| Action Space | {act_type} |
+| Max Steps | {max_steps} |
+
+## Quick Start
+
+```bash
+pip install -r requirements.txt
+python train.py
+```
+
+## Usage
+
+```python
+from {slug.replace("-", "_")} import {safe_class}
+
+env = {safe_class}()
+obs, info = env.reset()
+
+for _ in range({max_steps}):
+    action = env.action_space.sample()
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        obs, info = env.reset()
+```
+
+---
+
+*Generated by [kualia.ai](https://kualia.ai)*
+"""
+
+    return files

@@ -1,3 +1,6 @@
+"use client";
+
+import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 
 const columns = [
@@ -26,6 +29,9 @@ const columns = [
 ];
 
 export function Footer() {
+  const { isSignedIn } = useAuth();
+  if (isSignedIn) return null;
+
   return (
     <footer className="border-t border-[#1a1a1a] mt-24">
       <div className="max-w-6xl mx-auto px-6 py-12">

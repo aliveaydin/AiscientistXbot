@@ -223,6 +223,22 @@ export async function getMyResearch(token: string, limit = 50, offset = 0) {
   return authFetch(`/api/users/me/research?limit=${limit}&offset=${offset}`, token);
 }
 
+export async function updateEnvName(envId: number, name: string) {
+  return fetchAPI(`/api/rlforge/envs/${envId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function githubExport(envId: number, repoName: string, description: string, isPrivate: boolean, token: string) {
+  return authFetch(`/api/rlforge/github/push/${envId}`, token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo_name: repoName, description, private: isPrivate }),
+  });
+}
+
 export async function getPublicProfile(username: string) {
   return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
 }
