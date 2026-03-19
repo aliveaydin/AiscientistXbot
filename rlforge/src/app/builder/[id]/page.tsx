@@ -92,7 +92,7 @@ export default function BuilderPage() {
       {/* Top bar */}
       <div className="border-b border-[#1a1a1a] px-6 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-4">
-          <Link href="/catalog" className="text-[#555] hover:text-white"><ArrowLeft size={16} /></Link>
+          <Link href="/dashboard" className="text-[#555] hover:text-white"><ArrowLeft size={16} /></Link>
           <span className="font-semibold">{env?.name || "Loading..."}</span>
           <span className="text-xs text-[#555] font-mono">v{env?.version || 1}</span>
           {env?.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888]">{env.domain}</span>}
@@ -348,10 +348,10 @@ function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; on
             <span className={`text-[10px] px-2 py-0.5 rounded ${isRunning ? "bg-blue-950 text-blue-400 animate-pulse" : "bg-green-950 text-green-400"}`}>{status?.status}</span>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <MiniChart data={curve} dataKey="mean_reward" label="Episode Reward" color="#22c55e" />
-            <MiniChart data={curve} dataKey="mean_ep_length" label="Episode Length" color="#3b82f6" />
-            <MiniChart data={curve} dataKey="success_rate" label="Success Rate" color="#eab308" format="percent" />
-            <MiniChart data={curve} dataKey="loss" label="Policy Loss" color="#ef4444" />
+            <MiniChart data={curve} dataKey="mean_reward" label="Episode Reward" color="#22c55e" status={status?.status} />
+            <MiniChart data={curve} dataKey="mean_ep_length" label="Episode Length" color="#3b82f6" status={status?.status} />
+            <MiniChart data={curve} dataKey="success_rate" label="Success Rate" color="#eab308" format="percent" status={status?.status} />
+            <MiniChart data={curve} dataKey="loss" label="Policy Loss" color="#ef4444" status={status?.status} />
           </div>
           {!isRunning && curve.length > 0 && (
             <div className="flex gap-4 text-[10px] text-[#555]">
@@ -548,6 +548,7 @@ function HistoryView({ envId }: { envId: number }) {
   const [showCompare, setShowCompare] = useState(false);
   const [expandedReport, setExpandedReport] = useState<number | null>(null);
   const [reports, setReports] = useState<Record<number, any>>({});
+  const [curves, setCurves] = useState<Record<number, any[]>>({});
 
   useEffect(() => {
     (async () => {
@@ -561,6 +562,7 @@ function HistoryView({ envId }: { envId: number }) {
     try {
       const r = await getTrainingReport(envId, runId);
       setReports(p => ({ ...p, [runId]: r }));
+      if (r.curve) setCurves(p => ({ ...p, [runId]: r.curve }));
       setExpandedReport(runId);
     } catch {}
   }
@@ -662,7 +664,18 @@ function HistoryView({ envId }: { envId: number }) {
                 {r.results?.error && <div className="px-3 pb-2"><p className="text-[10px] text-red-400 truncate">{r.results.error}</p></div>}
                 {isExpanded && reports[r.id] && (
                   <div className="border-t border-[#1a1a1a]">
-                    <TrainingReportView report={reports[r.id]} curve={[]} envName={undefined} />
+                    {curves[r.id] && curves[r.id].length > 0 && (
+                      <div className="p-4 border-b border-[#1a1a1a]">
+                        <h4 className="text-xs font-medium text-[#888] mb-3">Training Curves</h4>
+                        <div className="grid grid-cols-2 gap-3">
+                          <MiniChart data={curves[r.id]} dataKey="mean_reward" label="Episode Reward" color="#22c55e" status="completed" />
+                          <MiniChart data={curves[r.id]} dataKey="mean_ep_length" label="Episode Length" color="#3b82f6" status="completed" />
+                          <MiniChart data={curves[r.id]} dataKey="success_rate" label="Success Rate" color="#eab308" format="percent" status="completed" />
+                          <MiniChart data={curves[r.id]} dataKey="loss" label="Policy Loss" color="#ef4444" status="completed" />
+                        </div>
+                      </div>
+                    )}
+                    <TrainingReportView report={reports[r.id]} curve={curves[r.id] || []} envName={undefined} />
                   </div>
                 )}
               </div>
@@ -677,6 +690,24 @@ function HistoryView({ envId }: { envId: number }) {
 // ── Docs View ───────────────────────────────────
 
 function DocsView({ env }: { env: any }) {
+  const [trainingData, setTrainingData] = useState<any[]>([]);
+  const [latestReport, setLatestReport] = useState<any>(null);
+
+  useEffect(() => {
+    if (!env) return;
+    (async () => {
+      try {
+        const history = await getTrainingHistory(env.id);
+        setTrainingData(history);
+        const completed = history.filter((r: any) => r.status === "completed");
+        if (completed.length > 0) {
+          const best = completed[0];
+          try { setLatestReport(await getTrainingReport(env.id, best.id)); } catch {}
+        }
+      } catch {}
+    })();
+  }, [env?.id]);
+
   if (!env) return <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-[#555]" /></div>;
 
   const spec = env.env_spec || {};
@@ -684,82 +715,237 @@ function DocsView({ env }: { env: any }) {
   const act = spec.action_space || {};
   const reward = spec.reward_function || {};
   const episode = spec.episode || {};
+  const completedRuns = trainingData.filter((r: any) => r.status === "completed");
+  const latestRes = latestReport?.results || {};
+  const hp = latestRes.hyperparameters || latestReport?.hyperparameters || {};
 
   return (
     <div className="space-y-6 max-w-2xl">
+      {/* Header */}
       <div>
         <h2 className="text-lg font-bold mb-1">{env.name}</h2>
-        <p className="text-xs text-[#555]">{env.domain} &middot; {env.difficulty} &middot; v{env.version}</p>
+        <div className="flex flex-wrap gap-2 mt-2">
+          {env.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888]">{env.domain}</span>}
+          {env.difficulty && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888]">{env.difficulty}</span>}
+          <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888]">v{env.version}</span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full ${env.status === "published" ? "bg-green-950 text-green-400" : "bg-[#1a1a1a] text-[#888]"}`}>{env.status}</span>
+        </div>
       </div>
 
+      {/* Overview */}
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">About This Environment</h3>
+        <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Overview</h3>
         <p className="text-[13px] text-[#bbb] leading-relaxed">{env.description || "No description available."}</p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-3">
+          {[
+            ["Domain", env.domain],
+            ["Difficulty", env.difficulty],
+            ["Max Steps", episode.max_steps || env.max_steps || 1000],
+            ["Version", `v${env.version}`],
+            ["Status", env.status],
+            ["Created", env.created_at ? new Date(env.created_at).toLocaleDateString() : "—"],
+          ].map(([l, v]) => (
+            <div key={String(l)} className="flex justify-between text-[11px] py-0.5">
+              <span className="text-[#555]">{l}</span>
+              <span className="font-mono text-[#bbb]">{v ?? "—"}</span>
+            </div>
+          ))}
+        </div>
       </section>
 
+      {/* Observation Space */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Observation Space</h3>
-        <p className="text-[13px] text-[#bbb] leading-relaxed">
-          The agent observes a <span className="font-mono text-blue-400">{obs.type || env.observation_space || "Box"}</span> vector
-          {obs.shape && <> of shape <span className="font-mono text-blue-400">[{Array.isArray(obs.shape)?obs.shape.join(", "):obs.shape}]</span></>}.
-          {obs.low !== undefined && <> Values are normalized to the range <span className="font-mono">[{obs.low}, {obs.high}]</span>.</>}
-          {obs.components?.length > 0 && <> This includes: {obs.components.join(", ")}.</>}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+          <div className="flex justify-between text-[11px]"><span className="text-[#555]">Type</span><span className="font-mono text-blue-400">{obs.type || env.observation_space || "Box"}</span></div>
+          {obs.shape && <div className="flex justify-between text-[11px]"><span className="text-[#555]">Shape</span><span className="font-mono text-blue-400">[{Array.isArray(obs.shape) ? obs.shape.join(", ") : obs.shape}]</span></div>}
+          {obs.low !== undefined && <div className="flex justify-between text-[11px]"><span className="text-[#555]">Range</span><span className="font-mono">[{obs.low}, {obs.high}]</span></div>}
+        </div>
+        {obs.components?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[10px] text-[#555] mb-1.5">Components ({obs.components.length})</p>
+            <div className="flex flex-wrap gap-1">{obs.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-blue-950/30 text-blue-400 rounded">{c}</span>)}</div>
+          </div>
+        )}
+        <p className="text-[12px] text-[#888] leading-relaxed mt-1">
+          The agent receives a {obs.type || "Box"} observation at each step.
+          {obs.shape && <> The observation vector has {Array.isArray(obs.shape) ? obs.shape.reduce((a: number, b: number) => a * b, 1) : obs.shape} dimensions.</>}
+          {obs.components?.length > 0 && <> Each component encodes different aspects of the environment state: {obs.components.slice(0, 5).join(", ")}{obs.components.length > 5 ? `, and ${obs.components.length - 5} more` : ""}.</>}
         </p>
       </section>
 
+      {/* Action Space */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Action Space</h3>
-        <p className="text-[13px] text-[#bbb] leading-relaxed">
-          The agent can take actions from a <span className="font-mono text-purple-400">{act.type || env.action_space || "Discrete"}</span> space
-          {act.shape && <> with shape <span className="font-mono text-purple-400">[{Array.isArray(act.shape)?act.shape.join(", "):act.shape}]</span></>}.
-          {act.components?.length > 0 && <> Available actions: {act.components.join(", ")}.</>}
-          {act.type === "Discrete" && <> The agent chooses one discrete action per step.</>}
-          {act.type === "Box" && <> The agent outputs continuous values per step.</>}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+          <div className="flex justify-between text-[11px]"><span className="text-[#555]">Type</span><span className="font-mono text-purple-400">{act.type || env.action_space || "Discrete"}</span></div>
+          {act.shape && <div className="flex justify-between text-[11px]"><span className="text-[#555]">Shape</span><span className="font-mono text-purple-400">[{Array.isArray(act.shape) ? act.shape.join(", ") : act.shape}]</span></div>}
+          {act.n !== undefined && <div className="flex justify-between text-[11px]"><span className="text-[#555]">N Actions</span><span className="font-mono text-purple-400">{act.n}</span></div>}
+        </div>
+        {act.components?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[10px] text-[#555] mb-1.5">Actions</p>
+            <div className="flex flex-wrap gap-1">{act.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-purple-950/30 text-purple-400 rounded">{c}</span>)}</div>
+          </div>
+        )}
+        <p className="text-[12px] text-[#888] leading-relaxed mt-1">
+          {act.type === "Discrete" ? "The agent selects one discrete action per timestep. This is suitable for grid-based, turn-based, or categorical decision environments." : act.type === "Box" ? "The agent outputs continuous control values per timestep. This is suitable for robotics, continuous control, and fine-grained manipulation tasks." : "The agent selects an action from the defined action space at each timestep."}
         </p>
       </section>
 
+      {/* Reward Function */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Reward Function</h3>
         <p className="text-[13px] text-[#bbb] leading-relaxed">
           {reward.type || env.reward_description || "Reward function details not available."}
-          {reward.range && <> The reward is clipped to [{Array.isArray(reward.range)?reward.range.join(", "):reward.range}].</>}
-          {reward.components?.length > 0 && <> Reward components: {reward.components.join(", ")}.</>}
         </p>
+        {reward.range && (
+          <div className="flex justify-between text-[11px] mt-1"><span className="text-[#555]">Range</span><span className="font-mono">[{Array.isArray(reward.range) ? reward.range.join(", ") : reward.range}]</span></div>
+        )}
+        {reward.components?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[10px] text-[#555] mb-1.5">Reward Components</p>
+            <div className="flex flex-wrap gap-1">{reward.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-yellow-950/30 text-yellow-400 rounded">{c}</span>)}</div>
+          </div>
+        )}
       </section>
 
+      {/* Episode & Termination */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Episode Configuration</h3>
-        <p className="text-[13px] text-[#bbb] leading-relaxed">
-          Each episode runs for a maximum of <span className="font-mono">{episode.max_steps || env.max_steps || 1000}</span> steps.
-          {episode.termination_conditions?.length > 0 && <> The episode terminates when: {episode.termination_conditions.join("; ")}.</>}
-          {episode.truncation_conditions?.length > 0 && <> The episode is truncated when: {episode.truncation_conditions.join("; ")}.</>}
-        </p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+          <div className="flex justify-between text-[11px]"><span className="text-[#555]">Max Steps</span><span className="font-mono">{episode.max_steps || env.max_steps || 1000}</span></div>
+        </div>
+        {episode.termination_conditions?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[10px] text-[#555] mb-1">Termination Conditions (episode ends)</p>
+            <ul className="space-y-0.5">{episode.termination_conditions.map((c: string, i: number) => <li key={i} className="text-[11px] text-[#bbb] flex items-start gap-1.5"><span className="text-red-400 mt-0.5">&#x2022;</span>{c}</li>)}</ul>
+          </div>
+        )}
+        {episode.truncation_conditions?.length > 0 && (
+          <div className="mt-2">
+            <p className="text-[10px] text-[#555] mb-1">Truncation Conditions (time limit)</p>
+            <ul className="space-y-0.5">{episode.truncation_conditions.map((c: string, i: number) => <li key={i} className="text-[11px] text-[#bbb] flex items-start gap-1.5"><span className="text-yellow-400 mt-0.5">&#x2022;</span>{c}</li>)}</ul>
+          </div>
+        )}
       </section>
 
+      {/* Training Results (if any) */}
+      {completedRuns.length > 0 && (
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Training Results</h3>
+          <p className="text-[12px] text-[#888]">{completedRuns.length} completed training run{completedRuns.length > 1 ? "s" : ""} recorded for this environment.</p>
+
+          {latestRes.mean_reward !== undefined && (
+            <div className="grid grid-cols-4 gap-3">
+              <div className="border border-[#1a1a1a] rounded-lg p-3 text-center">
+                <p className="text-base font-mono font-bold text-green-400">{latestRes.mean_reward}</p>
+                <p className="text-[9px] text-[#555] mt-0.5">Mean Reward</p>
+              </div>
+              <div className="border border-[#1a1a1a] rounded-lg p-3 text-center">
+                <p className="text-base font-mono font-bold text-yellow-400">{Math.round((latestRes.success_rate || 0) * 100)}%</p>
+                <p className="text-[9px] text-[#555] mt-0.5">Success Rate</p>
+              </div>
+              <div className="border border-[#1a1a1a] rounded-lg p-3 text-center">
+                <p className="text-base font-mono font-bold text-blue-400">{latestRes.mean_ep_length}</p>
+                <p className="text-[9px] text-[#555] mt-0.5">Avg Length</p>
+              </div>
+              <div className="border border-[#1a1a1a] rounded-lg p-3 text-center">
+                <p className="text-base font-mono font-bold text-[#888]">{latestRes.training_time_sec ? formatDuration(latestRes.training_time_sec) : "—"}</p>
+                <p className="text-[9px] text-[#555] mt-0.5">Train Time</p>
+              </div>
+            </div>
+          )}
+
+          {/* Best run details */}
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+            {[
+              ["Algorithm", latestReport?.algorithm],
+              ["Total Timesteps", latestRes.total_timesteps?.toLocaleString()],
+              ["Episodes Trained", latestRes.episodes_trained?.toLocaleString()],
+              ["Eval Episodes", latestRes.eval_episodes],
+              ["Reward StdDev", latestRes.std_reward],
+              ["Env Version", `v${latestReport?.env_version || "?"}`],
+            ].map(([l, v]) => (
+              <div key={String(l)} className="flex justify-between text-[11px] py-0.5">
+                <span className="text-[#555]">{l}</span>
+                <span className="font-mono text-[#bbb]">{v ?? "—"}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Hyperparameters */}
+          {Object.keys(hp).length > 0 && (
+            <div className="mt-3">
+              <p className="text-[10px] text-[#555] mb-1.5 font-medium uppercase tracking-wider">Hyperparameters</p>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1">
+                {Object.entries(hp).map(([k, v]) => (
+                  <div key={k} className="flex justify-between text-[11px] py-0.5">
+                    <span className="text-[#555]">{k}</span>
+                    <span className="font-mono text-[#bbb]">{typeof v === "number" ? (Number.isInteger(v) ? v : (v as number).toFixed(6)) : String(v)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* All runs summary */}
+          {completedRuns.length > 1 && (
+            <div className="mt-3">
+              <p className="text-[10px] text-[#555] mb-1.5 font-medium uppercase tracking-wider">All Completed Runs</p>
+              <div className="border border-[#1a1a1a] rounded-lg overflow-hidden">
+                <table className="w-full text-[11px]">
+                  <thead><tr className="border-b border-[#1a1a1a]">
+                    <th className="px-3 py-1.5 text-left text-[#555] font-medium">Run</th>
+                    <th className="px-3 py-1.5 text-left text-[#555] font-medium">Algo</th>
+                    <th className="px-3 py-1.5 text-right text-[#555] font-medium">Steps</th>
+                    <th className="px-3 py-1.5 text-right text-[#555] font-medium">Reward</th>
+                    <th className="px-3 py-1.5 text-right text-[#555] font-medium">Success</th>
+                  </tr></thead>
+                  <tbody>{completedRuns.slice(0, 10).map((r: any) => (
+                    <tr key={r.id} className="border-b border-[#1a1a1a]/30">
+                      <td className="px-3 py-1 font-mono text-[#888]">#{r.id}</td>
+                      <td className="px-3 py-1 text-[#bbb]">{r.algorithm}</td>
+                      <td className="px-3 py-1 text-right font-mono text-[#bbb]">{r.total_timesteps ? formatSteps(r.total_timesteps) : "—"}</td>
+                      <td className="px-3 py-1 text-right font-mono text-green-400">{r.mean_reward ?? "—"}</td>
+                      <td className="px-3 py-1 text-right font-mono text-yellow-400">{r.success_rate != null ? `${Math.round(r.success_rate * 100)}%` : "—"}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Training Guide */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Training Guide</h3>
-        <p className="text-[13px] text-[#bbb] leading-relaxed">
-          To train an agent on this environment, go to the <span className="text-white">Agent</span> tab and click <span className="text-white">Start Training</span>.
-          The platform will automatically select the best algorithm based on the action space type
-          ({act.type === "Discrete" ? "PPO or DQN for discrete actions" : act.type === "Box" ? "SAC for continuous actions" : "PPO as general-purpose default"}).
-          For a quick test, try 5K-10K timesteps. For meaningful results, use 50K-100K+. After training completes, you can review the
-          reward curve, success rate, and replay the trained agent&apos;s behavior step by step.
-        </p>
+        <div className="space-y-3 text-[12px] text-[#888] leading-relaxed">
+          <div>
+            <p className="text-white text-[11px] font-medium mb-1">Algorithm Selection</p>
+            <p>The platform auto-selects the best algorithm based on the action space. {act.type === "Discrete" ? "Discrete spaces use PPO (general) or DQN (sample-efficient). PPO is recommended for most cases." : act.type === "Box" ? "Continuous spaces use SAC (off-policy, sample-efficient) which handles continuous control well." : "PPO is used as the general-purpose default."}</p>
+          </div>
+          <div>
+            <p className="text-white text-[11px] font-medium mb-1">Recommended Timesteps</p>
+            <p><span className="text-[#bbb]">Quick test:</span> 5K-10K steps (1-3 min). <span className="text-[#bbb]">Meaningful results:</span> 50K-100K steps (5-15 min). <span className="text-[#bbb]">Strong performance:</span> 500K-1M steps (20-60 min). Complex environments with high-dimensional observations or sparse rewards need more steps.</p>
+          </div>
+          <div>
+            <p className="text-white text-[11px] font-medium mb-1">Continue Training</p>
+            <p>After a run completes, use <span className="text-white">Continue Training</span> to load the saved model weights and train further. This is useful for incrementally improving performance without starting from scratch. Each continuation is recorded as a separate experiment in History.</p>
+          </div>
+          <div>
+            <p className="text-white text-[11px] font-medium mb-1">Experiment Workflow</p>
+            <p>Each training run is an experiment linked to the environment version. To improve results: (1) Continue Training for more timesteps, (2) modify the environment via chat to create a new version, then retrain. The History tab tracks all runs grouped by env version for comparison.</p>
+          </div>
+          <div>
+            <p className="text-white text-[11px] font-medium mb-1">Metrics Explained</p>
+            <p><span className="text-green-400">Episode Reward</span> — cumulative reward per episode (higher = better). <span className="text-blue-400">Episode Length</span> — steps per episode (depends on task). <span className="text-yellow-400">Success Rate</span> — fraction of successful episodes. <span className="text-red-400">Policy Loss</span> — optimization loss (should decrease then stabilize).</p>
+          </div>
+        </div>
       </section>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Experiment Workflow</h3>
-        <p className="text-[13px] text-[#bbb] leading-relaxed">
-          Each training run is an <span className="text-white">experiment</span> linked to the environment version at the time of training.
-          To improve results, you can: (1) <span className="text-white">Continue Training</span> to add more timesteps with the same env,
-          or (2) modify the environment via the chat (e.g. adjust reward function, observation space), creating a new version,
-          then train again. The <span className="text-white">History</span> tab tracks all experiments grouped by env version,
-          letting you compare reward curves between different configurations (e.g. &quot;env v1 + PPO 100K&quot; vs &quot;env v2 + PPO 100K&quot;).
-          Each completed run generates a full <span className="text-white">Training Report</span> with hyperparameters and reproducibility info,
-          exportable as PDF for papers and documentation.
-        </p>
-      </section>
-
+      {/* Usage */}
       <section className="space-y-2">
         <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Usage (Python SDK)</h3>
         <pre className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4 text-xs text-[#bbb] overflow-x-auto">{`import kualia
@@ -767,8 +953,8 @@ function DocsView({ env }: { env: any }) {
 env = kualia.make('${env.slug || "your-env"}', api_key='YOUR_KEY')
 obs, info = env.reset(seed=42)
 
-for step in range(1000):
-    action = env.action_space.sample()  # or your agent
+for step in range(${episode.max_steps || env.max_steps || 1000}):
+    action = env.action_space.sample()  # or your trained agent
     obs, reward, terminated, truncated, info = env.step(action)
     if terminated or truncated:
         obs, info = env.reset()`}</pre>
@@ -779,9 +965,12 @@ for step in range(1000):
 
 // ── Shared Components ───────────────────────────
 
-function MiniChart({ data, dataKey, label, color, format }: { data: any[]; dataKey: string; label: string; color: string; format?: string }) {
+function MiniChart({ data, dataKey, label, color, format, status }: { data: any[]; dataKey: string; label: string; color: string; format?: string; status?: string }) {
   const values = data.map(d => d[dataKey]).filter(v => v !== undefined && v !== null);
-  if (values.length < 2) return <div className="border border-[#1a1a1a] rounded-lg p-3 h-28 flex items-center justify-center"><span className="text-[10px] text-[#333]">{label}: waiting...</span></div>;
+  if (values.length < 2) {
+    const msg = status === "completed" ? `${label}: N/A` : `${label}: waiting...`;
+    return <div className="border border-[#1a1a1a] rounded-lg p-3 h-28 flex items-center justify-center"><span className="text-[10px] text-[#333]">{msg}</span></div>;
+  }
   const min = Math.min(...values); const max = Math.max(...values); const range = max - min || 1;
   const w = 200; const h = 60;
   const points = values.map((v, i) => `${(i/(values.length-1))*w},${h-((v-min)/range)*h}`).join(" ");

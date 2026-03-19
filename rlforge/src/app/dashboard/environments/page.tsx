@@ -89,16 +89,11 @@ export default function DashboardEnvironmentsPage() {
               <thead>
                 <tr className="border-b border-[#1a1a1a] text-[#888] text-xs">
                   <th className="text-left px-4 py-3 font-medium">Name</th>
-                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">
-                    Category
-                  </th>
-                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">
-                    Difficulty
-                  </th>
+                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Category</th>
+                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Difficulty</th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
-                  <th className="text-left px-4 py-3 font-medium hidden md:table-cell">
-                    Version
-                  </th>
+                  <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Training</th>
+                  <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Version</th>
                   <th className="text-right px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
@@ -135,6 +130,27 @@ export default function DashboardEnvironmentsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <StatusDot status={env.status} />
+                    </td>
+                    <td className="px-4 py-3 hidden lg:table-cell">
+                      {env.training ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-green-400">
+                            R: {env.training.mean_reward}
+                          </span>
+                          {env.training.success_rate != null && (
+                            <span className="text-[10px] font-mono text-yellow-400">
+                              {Math.round(env.training.success_rate * 100)}%
+                            </span>
+                          )}
+                          <span className="text-[9px] text-[#555]">
+                            {env.training.algorithm}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-[#444]">
+                          Not trained
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
                       <span className="text-xs text-[#888]">

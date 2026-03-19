@@ -164,6 +164,28 @@ async def get_my_environments(
     result = await db.execute(q)
     envs = result.scalars().all()
 
+    import json as _json
+
+    env_ids = [e.id for e in envs]
+    training_map: dict = {}
+    if env_ids:
+        latest_runs_q = (
+            select(TrainingRun)
+            .where(TrainingRun.env_id.in_(env_ids), TrainingRun.status == "completed")
+            .order_by(desc(TrainingRun.id))
+        )
+        all_completed = (await db.execute(latest_runs_q)).scalars().all()
+        for r in all_completed:
+            if r.env_id not in training_map:
+                res = _json.loads(r.results_json) if r.results_json else {}
+                training_map[r.env_id] = {
+                    "algorithm": r.algorithm,
+                    "mean_reward": res.get("mean_reward"),
+                    "success_rate": res.get("success_rate"),
+                    "total_timesteps": res.get("total_timesteps"),
+                    "training_time_sec": res.get("training_time_sec"),
+                }
+
     return {
         "total": total,
         "items": [
@@ -179,6 +201,7 @@ async def get_my_environments(
                 "version": e.version,
                 "created_at": e.created_at.isoformat() if e.created_at else None,
                 "updated_at": e.updated_at.isoformat() if e.updated_at else None,
+                "training": training_map.get(e.id),
             }
             for e in envs
         ],

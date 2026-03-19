@@ -372,10 +372,20 @@ try:
                 try:
                     logger = self.model.logger
                     if hasattr(logger, "name_to_value"):
-                        for key in ["train/loss", "train/policy_gradient_loss",
-                                     "train/value_loss", "train/entropy_loss"]:
+                        all_loss_keys = [
+                            "train/loss", "train/policy_gradient_loss",
+                            "train/value_loss", "train/entropy_loss",
+                            "train/actor_loss", "train/critic_loss",
+                        ]
+                        for key in all_loss_keys:
                             if key in logger.name_to_value:
                                 point[key.split("/")[-1]] = round(float(logger.name_to_value[key]), 6)
+                        # Always write a generic 'loss' key from best available
+                        if "loss" not in point:
+                            for fallback in ["policy_gradient_loss", "actor_loss", "critic_loss", "value_loss"]:
+                                if fallback in point:
+                                    point["loss"] = point[fallback]
+                                    break
                 except Exception:
                     pass
 
