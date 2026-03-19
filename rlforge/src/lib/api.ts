@@ -247,6 +247,38 @@ export async function runLabAll(projectId: number) {
   return fetchAPI(`/api/lab/projects/${projectId}/run-all`, { method: "POST" });
 }
 
+export async function getLabChatboard(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/chatboard`, { revalidate: 5 });
+}
+
+export async function getLabProject(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}`, { revalidate: 5 });
+}
+
+export async function getLabEnvironments(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/environments`, { revalidate: 10 });
+}
+
+export async function getLabTrainingRuns(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/training-runs`, { revalidate: 5 });
+}
+
+export async function getLabPaper(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/paper`, { revalidate: 30 });
+}
+
+export async function getLabReferences(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/references`, { revalidate: 60 });
+}
+
+export async function getLabAgents() {
+  return fetchAPI(`/api/lab/agents`, { revalidate: 3600 });
+}
+
+export async function getLabPhases() {
+  return fetchAPI(`/api/lab/phases`, { revalidate: 3600 });
+}
+
 export async function getPublicProfile(username: string) {
   return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
 }

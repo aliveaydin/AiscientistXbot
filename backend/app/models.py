@@ -134,7 +134,7 @@ class ResearchProject(Base):
     description = Column(Text, nullable=True)
     topic = Column(Text, nullable=True)
     status = Column(String(50), default="active")  # active, completed, paused, failed
-    current_phase = Column(String(50), default="brainstorm")
+    current_phase = Column(String(50), default="research")
     selected_idea = Column(Text, nullable=True)
     revision_count = Column(Integer, default=0)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -146,6 +146,7 @@ class ResearchProject(Base):
     works = relationship("AgentWork", back_populates="project", cascade="all, delete-orphan")
     papers = relationship("ResearchPaper", back_populates="project", cascade="all, delete-orphan")
     references = relationship("ProjectReference", back_populates="project", cascade="all, delete-orphan")
+    environments = relationship("RLEnvironment", back_populates="research_project", foreign_keys="RLEnvironment.research_project_id")
 
 
 class ProjectReference(Base):
@@ -232,11 +233,13 @@ class RLEnvironment(Base):
     max_steps = Column(Integer, default=1000)
     api_enabled = Column(Boolean, default=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    research_project_id = Column(Integer, ForeignKey("research_projects.id"), nullable=True)
     published_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     owner = relationship("User", back_populates="environments", foreign_keys=[user_id])
+    research_project = relationship("ResearchProject", back_populates="environments", foreign_keys=[research_project_id])
     builder_conversations = relationship("BuilderConversation", back_populates="environment", cascade="all, delete-orphan")
     training_runs = relationship("TrainingRun", back_populates="environment", cascade="all, delete-orphan")
     versions = relationship("EnvVersion", back_populates="environment", cascade="all, delete-orphan")

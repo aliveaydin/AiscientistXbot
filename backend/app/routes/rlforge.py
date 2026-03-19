@@ -974,23 +974,12 @@ async def create_research_project(
 
     research_user_id = await _resolve_user_id(db, auth_user)
 
-    project = ResearchProject(
-        title=title,
+    project = await lab_service.create_project(
+        db, title,
         description=data.get("description", ""),
         topic=data.get("topic", ""),
-        status="active",
-        current_phase="brainstorm",
         user_id=research_user_id,
     )
-    db.add(project)
-    await db.commit()
-    await db.refresh(project)
-
-    if project.topic:
-        try:
-            await lab_service._search_and_import_topic_papers(db, project, min_papers=10)
-        except Exception as e:
-            logger.warning("Failed to import topic papers: %s", e)
 
     return {"id": project.id, "title": project.title, "status": project.status}
 

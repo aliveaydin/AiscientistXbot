@@ -37,12 +37,13 @@ export default function DashboardResearchPage() {
   const totalPages = Math.ceil(total / perPage);
 
   const phaseLabels: Record<string, string> = {
-    brainstorm: "Brainstorm",
-    literature: "Literature Review",
-    methodology: "Methodology",
-    experiments: "Experiments",
-    writing: "Writing",
+    research: "Research",
+    design: "Design",
+    experiment: "Experiment",
+    analyze: "Analyze",
+    write: "Write",
     review: "Review",
+    brainstorm: "Brainstorm",
     completed: "Completed",
   };
 

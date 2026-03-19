@@ -1,86 +1,77 @@
+"""
+Research Lab Service — Automated RL Research Pipeline
+
+Phases: research → design → experiment → analyze → write → review
+Agents: Sage (Research Strategist) + Atlas (RL Engineer)
+
+Unique: The pipeline generates REAL RL environments and trains REAL agents,
+producing papers backed by actual experimental data.
+"""
 import json
 import logging
-import subprocess
-import sys
-import tempfile
-import os
-import base64
+import re
+import asyncio
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import Optional, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Article, ResearchProject, AgentMessage, AgentWork, ResearchPaper, ProjectReference
+from app.models import (
+    ResearchProject, AgentMessage, AgentWork, ResearchPaper,
+    Article, ProjectReference, RLEnvironment, EnvVersion, TrainingRun,
+)
+from app.database import async_session
 
 logger = logging.getLogger("lab")
 
-PHASES = ["brainstorm", "discussion", "decision", "methodology", "experiments", "writing", "review"]
+PHASES = ["research", "design", "experiment", "analyze", "write", "review"]
 
 AGENTS = {
-    "aria": {
-        "name": "Prof. Aria",
-        "role": "Principal Investigator & Literature Lead",
+    "sage": {
+        "name": "Sage",
+        "role": "Research Strategist",
         "color": "#f59e0b",
-        "model_preference": "kimi",
+        "model_preference": "sonnet",
         "system_prompt": (
-            "You are Professor Aria, Principal Investigator at a leading AI and Reinforcement Learning research lab. "
-            "You have 20+ years of experience across machine learning, deep learning, NLP, computer vision, and RL. "
-            "You combine the roles of PI and Literature Agent: you survey ArXiv for relevant work, identify RL environments, "
-            "algorithms, and metrics from papers, and guide the team's research direction. "
-            "You are visionary yet pragmatic; you identify high-impact research gaps, evaluate novelty rigorously, "
-            "and guide your team toward publishable results. You ask penetrating questions, challenge weak assumptions, "
-            "and synthesize ideas across subfields. You have final say on research direction but value your team's input. "
-            "When evaluating ideas, consider: novelty, feasibility, potential impact, and whether the team can execute it "
-            "with available resources. For RL projects specifically, you evaluate environment design, reward shaping, "
-            "algorithm selection, and benchmark choices. Speak concisely and professionally. Never use emojis."
+            "You are Sage, a world-class AI Research Strategist specializing in Reinforcement Learning. "
+            "You read academic papers with deep comprehension, identify research gaps, "
+            "formulate testable hypotheses, and design rigorous experimental studies. "
+            "Your expertise spans RL algorithms (PPO, SAC, DQN, GRPO), environment design, "
+            "reward shaping, multi-agent systems, and transfer learning. "
+            "You think scientifically: observation → hypothesis → experiment → analysis → conclusion. "
+            "You write in precise academic English suitable for top ML conferences (NeurIPS, ICML, ICLR). "
+            "When analyzing results, you look for statistically meaningful patterns. "
+            "You are honest about limitations and careful about overclaiming. "
+            "Speak concisely and professionally. Never use emojis."
         ),
     },
-    "marcus": {
-        "name": "Dr. Marcus",
-        "role": "ML Engineer / Experimentalist / Replication Specialist",
+    "atlas": {
+        "name": "Atlas",
+        "role": "RL Engineer",
         "color": "#3b82f6",
         "model_preference": "kimi",
         "system_prompt": (
-            "You are Dr. Marcus, a senior ML Engineer, Experimentalist, and Replication Specialist. "
-            "You think in architectures, loss functions, training procedures, and evaluation metrics. "
-            "You are hands-on: you design experiments, write clean Python code, create benchmarks, and analyze results "
-            "with statistical rigor. You are skeptical of claims without empirical evidence and push for reproducibility. "
-            "In RL projects, you generate environments using the Architect Agent, train agents with Stable Baselines3 "
-            "(PPO, SAC, DQN), run A/B experiments, compare baselines, and replicate paper results. "
-            "When proposing experiments, specify: environment, algorithm, hyperparameters, baselines, metrics, and "
-            "expected compute. You write production-quality code with numpy, PyTorch, gymnasium, and matplotlib. "
+            "You are Atlas, an expert RL Engineer who builds and trains reinforcement learning systems. "
+            "You design Gymnasium-compatible environments, select algorithms (PPO, SAC, DQN), "
+            "configure training hyperparameters, and interpret training metrics. "
+            "You understand observation spaces, action spaces, reward shaping, "
+            "and environment dynamics at a deep level. "
+            "You work with Stable Baselines3 and know practical tradeoffs between algorithms. "
+            "When given a research plan, you translate it into concrete technical specifications. "
             "Speak technically but clearly. Never use emojis."
-        ),
-    },
-    "elena": {
-        "name": "Dr. Elena",
-        "role": "Academic Writer / Analyst / Critical Reviewer",
-        "color": "#10b981",
-        "model_preference": "sonnet",
-        "system_prompt": (
-            "You are Dr. Elena, an Academic Writer, Statistical Analyst, and Critical Reviewer with 50+ published papers. "
-            "You write in precise, clear academic English suitable for top ML/RL conferences (NeurIPS, ICML, ICLR). "
-            "You conduct thorough literature reviews, identify related work, and position contributions clearly. "
-            "You ensure methodological rigor: proper experimental controls, statistical significance, ablation studies. "
-            "In RL projects, you perform statistical analysis of training curves, detect reward hacking, evaluate "
-            "generalization across environment variants, and recommend improvements. "
-            "You format papers for ArXiv with proper structure: Abstract, Introduction, Related Work, Methodology, "
-            "Experiments, Results, Discussion, Conclusion, References. You are detail-oriented and catch logical gaps, "
-            "unsupported claims, and writing issues. Speak precisely and constructively. Never use emojis."
         ),
     },
 }
 
 
 class LabService:
+    # ── LLM Calls ────────────────────────────────────────────────
 
     async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str) -> str:
         from app.services.ai_service import ai_service
-
         agent = AGENTS[agent_key]
         pref = agent["model_preference"]
-
         if pref == "kimi":
             try:
                 return await ai_service._call_kimi(system_prompt, user_prompt)
@@ -91,22 +82,9 @@ class LabService:
                 return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514")
             except Exception:
                 pass
-
         return await ai_service._call_ai(system_prompt, user_prompt)
 
-    async def _get_paper_context(self, db: AsyncSession, max_papers: int = 30) -> str:
-        result = await db.execute(
-            select(Article).order_by(Article.relevance_score.desc().nullslast(), Article.added_at.desc()).limit(max_papers)
-        )
-        articles = result.scalars().all()
-
-        parts = []
-        for art in articles:
-            summary = art.summary or (art.content[:600] + "..." if art.content and len(art.content) > 600 else art.content or "")
-            source = f" [ArXiv: {art.arxiv_id}]" if art.arxiv_id else ""
-            parts.append(f"[{art.title or art.filename}]{source}\n{summary}")
-
-        return "\n\n---\n\n".join(parts) if parts else "No papers available."
+    # ── Data Helpers ─────────────────────────────────────────────
 
     async def _get_conversation_history(self, db: AsyncSession, project_id: int, phases: Optional[List[str]] = None) -> str:
         query = select(AgentMessage).where(AgentMessage.project_id == project_id).order_by(AgentMessage.created_at)
@@ -114,12 +92,11 @@ class LabService:
             query = query.where(AgentMessage.phase.in_(phases))
         result = await db.execute(query)
         messages = result.scalars().all()
-
         lines = []
         for msg in messages:
             agent = AGENTS.get(msg.agent_name, {})
             name = agent.get("name", msg.agent_name)
-            lines.append(f"[{name} | {msg.phase} R{msg.round_num}]:\n{msg.content}")
+            lines.append(f"[{name} | {msg.phase}]:\n{msg.content}")
         return "\n\n".join(lines)
 
     async def _save_message(self, db: AsyncSession, project_id: int, agent_name: str, content: str, phase: str, round_num: int = 1) -> AgentMessage:
@@ -135,14 +112,31 @@ class LabService:
         work = AgentWork(
             project_id=project_id, agent_name=agent_name,
             work_type=work_type, title=title, content=content,
-            metadata_json=json.dumps(metadata) if metadata else None,
+            metadata_json=json.dumps(metadata, default=str) if metadata else None,
         )
         db.add(work)
         await db.flush()
         return work
 
+    async def _get_project_paper_context(self, db: AsyncSession, project: ResearchProject) -> str:
+        refs_result = await db.execute(
+            select(Article).join(ProjectReference, ProjectReference.article_id == Article.id).where(
+                ProjectReference.project_id == project.id
+            ).order_by(Article.relevance_score.desc().nullslast())
+        )
+        articles = refs_result.scalars().all()
+        if not articles:
+            return "No reference papers available."
+        parts = []
+        for art in articles:
+            summary = art.summary or (art.content[:600] + "..." if art.content and len(art.content) > 600 else art.content or "")
+            source = f" [ArXiv: {art.arxiv_id}]" if art.arxiv_id else ""
+            parts.append(f"[{art.title or art.filename}]{source}\n{summary}")
+        return "\n\n---\n\n".join(parts)
+
+    # ── ArXiv Search ─────────────────────────────────────────────
+
     async def _extract_search_terms(self, topic: str) -> list:
-        """Use AI to extract concise ArXiv search terms from a topic description."""
         from app.services.ai_service import ai_service
         try:
             prompt = (
@@ -156,17 +150,13 @@ class LabService:
                 prompt,
             )
             terms = [t.strip().strip('"').strip("'") for t in response.split(",") if t.strip()]
-            logger.info(f"[Lab] Extracted search terms: {terms}")
             return terms[:6]
-        except Exception as e:
-            logger.warning(f"[Lab] AI keyword extraction failed, using fallback: {e}")
+        except Exception:
             words = [w.strip() for w in topic.replace(",", " ").split() if len(w.strip()) > 2]
             return [" ".join(words[i:i+2]) for i in range(0, min(len(words), 6), 2)] if words else [topic[:50]]
 
     async def _search_arxiv_by_terms(self, search_terms: list, max_results: int = 30) -> list:
-        """Search ArXiv with extracted terms and return parsed entries."""
         import httpx
-        import re
         import xml.etree.ElementTree as ET
 
         category_filter = " OR ".join(f"cat:{cat}" for cat in [
@@ -175,8 +165,6 @@ class LabService:
         term_queries = [f'abs:"{term}"' for term in search_terms]
         keyword_query = " OR ".join(term_queries)
         full_query = f"({keyword_query}) AND ({category_filter})"
-
-        logger.info(f"[Lab] ArXiv query: {full_query}")
 
         params = {
             "search_query": full_query,
@@ -198,31 +186,26 @@ class LabService:
 
         entries = []
         for entry in root.findall("atom:entry", ns):
-            arxiv_id_url = entry.find("atom:id", ns).text
-            arxiv_id = arxiv_id_url.split("/abs/")[-1]
-            title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
-            title = re.sub(r"\s+", " ", title)
-            abstract = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
-            abstract = re.sub(r"\s+", " ", abstract)
-            categories = [cat.get("term") for cat in entry.findall("atom:category", ns)]
-            entries.append({
-                "arxiv_id": arxiv_id,
-                "title": title,
-                "abstract": abstract,
-                "categories": categories,
-            })
+            try:
+                arxiv_id_url = entry.find("atom:id", ns).text
+                arxiv_id = arxiv_id_url.split("/abs/")[-1]
+                title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
+                title = re.sub(r"\s+", " ", title)
+                abstract = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
+                abstract = re.sub(r"\s+", " ", abstract)
+                categories = [cat.get("term") for cat in entry.findall("atom:category", ns)]
+                entries.append({"arxiv_id": arxiv_id, "title": title, "abstract": abstract, "categories": categories})
+            except Exception:
+                continue
 
-        logger.info(f"[Lab] ArXiv returned {len(entries)} results")
         return entries
 
     async def _search_and_import_topic_papers(self, db: AsyncSession, project: ResearchProject, min_papers: int = 10):
-        """Search ArXiv for papers related to the project topic, import and link them."""
         topic = project.topic
         if not topic:
             return
 
         logger.info(f"[Lab] Searching ArXiv for topic: {topic}")
-
         search_terms = await self._extract_search_terms(topic)
         entries = await self._search_arxiv_by_terms(search_terms, max_results=min_papers * 3)
 
@@ -242,9 +225,7 @@ class LabService:
         for entry in entries:
             if imported_count >= min_papers:
                 break
-
             arxiv_id = entry["arxiv_id"]
-
             if arxiv_id in existing_ids:
                 art_result = await db.execute(select(Article).where(Article.arxiv_id == arxiv_id))
                 existing_art = art_result.scalar_one_or_none()
@@ -261,48 +242,22 @@ class LabService:
                 continue
 
             content = f"{entry['title']}\n\nAbstract:\n{entry['abstract']}"
-
             article = Article(
                 filename=f"arxiv_{arxiv_id.replace('/', '_')}.pdf",
-                title=entry["title"],
-                content=content,
-                file_type="pdf",
-                source="arxiv",
-                arxiv_id=arxiv_id,
+                title=entry["title"], content=content, file_type="pdf",
+                source="arxiv", arxiv_id=arxiv_id,
                 arxiv_url=f"https://arxiv.org/abs/{arxiv_id}",
                 arxiv_categories=", ".join(entry["categories"]),
                 is_processed=False,
             )
             db.add(article)
             await db.flush()
-
             db.add(ProjectReference(project_id=project.id, article_id=article.id))
             existing_ids.add(arxiv_id)
             imported_count += 1
-            logger.info(f"[Lab] Imported reference: {entry['title'][:60]}")
 
         await db.commit()
         logger.info(f"[Lab] Total references linked: {imported_count} for project {project.id}")
-
-    async def _get_project_paper_context(self, db: AsyncSession, project: ResearchProject) -> str:
-        """Get paper context specific to this project's references, or all papers if no references."""
-        refs_result = await db.execute(
-            select(Article).join(ProjectReference, ProjectReference.article_id == Article.id).where(
-                ProjectReference.project_id == project.id
-            ).order_by(Article.relevance_score.desc().nullslast())
-        )
-        articles = refs_result.scalars().all()
-
-        if not articles:
-            return await self._get_paper_context(db)
-
-        parts = []
-        for art in articles:
-            summary = art.summary or (art.content[:600] + "..." if art.content and len(art.content) > 600 else art.content or "")
-            source = f" [ArXiv: {art.arxiv_id}]" if art.arxiv_id else ""
-            parts.append(f"[{art.title or art.filename}]{source}\n{summary}")
-
-        return "\n\n---\n\n".join(parts)
 
     async def get_project_references(self, db: AsyncSession, project_id: int) -> list:
         result = await db.execute(
@@ -313,280 +268,522 @@ class LabService:
         rows = result.all()
         return [
             {
-                "id": ref.id,
-                "project_id": ref.project_id,
-                "article_id": ref.article_id,
-                "article_title": art.title or art.filename,
-                "article_source": art.source,
-                "arxiv_url": art.arxiv_url,
-                "created_at": ref.created_at,
+                "id": ref.id, "project_id": ref.project_id, "article_id": ref.article_id,
+                "article_title": art.title or art.filename, "article_source": art.source,
+                "arxiv_url": art.arxiv_url, "created_at": ref.created_at,
             }
             for ref, art in rows
         ]
 
-    # ─── Phase Runners ──────────────────────────────────────────────
+    # ── Plan Parsing ─────────────────────────────────────────────
 
-    async def _run_brainstorm(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] BRAINSTORM phase for project {project.id}")
+    def _parse_research_plan(self, plan_text: str) -> dict:
+        if not plan_text:
+            return {}
+        # Direct JSON
+        try:
+            parsed = json.loads(plan_text)
+            if isinstance(parsed, dict) and "environments" in parsed:
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # ===RESEARCH_PLAN=== markers
+        match = re.search(r'===RESEARCH_PLAN===(.*?)===END_PLAN===', plan_text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        # ```json block
+        match = re.search(r'```json\s*\n?(.*?)```', plan_text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+        # Look for any JSON with "environments" key
+        for m in re.finditer(r'\{[^{}]*"environments"\s*:\s*\[', plan_text):
+            start = m.start()
+            depth = 0
+            for i in range(start, len(plan_text)):
+                if plan_text[i] == '{':
+                    depth += 1
+                elif plan_text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(plan_text[start:i+1])
+                        except json.JSONDecodeError:
+                            break
+        return {}
 
-        ref_ctx = await self._get_project_paper_context(db, project)
+    def _slugify(self, text: str) -> str:
+        slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
+        return slug[:200] or "research-env"
 
-        topic_instruction = ""
-        if project.topic:
-            topic_instruction = (
-                f"\n\nIMPORTANT: The research topic has been specified by the PI: \"{project.topic}\"\n"
-                f"All ideas MUST be directly related to this topic. Use the reference papers as foundation.\n"
-            )
+    # ── Phase 1: Research ────────────────────────────────────────
 
-        for agent_key in ["aria", "marcus", "elena"]:
-            prev_history = await self._get_conversation_history(db, project.id, ["brainstorm"])
-            agent = AGENTS[agent_key]
+    async def _run_research(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] RESEARCH phase for project {project.id}")
 
-            prev_note = ""
-            if prev_history:
-                prev_note = f"\n\nYour colleagues have already proposed ideas:\n{prev_history}\n\nBuild on their ideas or propose complementary ones. Avoid duplication.\n"
-
-            prompt = (
-                f"You are in a research lab brainstorming session.\n\n"
-                f"Reference papers (use as background knowledge, NOT to summarize):\n\n{ref_ctx}\n\n"
-                f"{topic_instruction}{prev_note}"
-                f"Propose 2-3 genuinely ORIGINAL research ideas that go BEYOND what these papers already do. "
-                f"Do NOT simply combine or extend existing work. Think about:\n"
-                f"- What fundamental questions remain unanswered?\n"
-                f"- What counter-intuitive hypotheses could be tested?\n"
-                f"- What cross-domain connections could yield breakthroughs?\n"
-                f"- What would change the field if proven true?\n\n"
-                f"For each idea, provide:\n"
-                f"1. Title\n2. Research question\n3. Why it matters (novelty/impact)\n4. Rough approach\n"
-                f"Be bold and creative. This is a research lab, we want NEW ideas, not surveys."
-            )
-            response = await self._call_agent(agent_key, agent["system_prompt"], prompt)
-            await self._save_message(db, project.id, agent_key, response, "brainstorm", 1)
-            await self._save_work(db, project.id, agent_key, "idea", f"Research Ideas from {agent['name']}", response)
-            await db.flush()
-
-        await db.commit()
-
-    async def _run_discussion(self, db: AsyncSession, project: ResearchProject, rounds: int = 3):
-        logger.info(f"[Lab] DISCUSSION phase for project {project.id} ({rounds} rounds)")
-
-        for round_num in range(1, rounds + 1):
-            for agent_key in ["aria", "marcus", "elena"]:
-                prev_history = await self._get_conversation_history(db, project.id, ["brainstorm", "discussion"])
-                agent = AGENTS[agent_key]
-                topic_note = f"\nResearch topic: \"{project.topic}\"\n" if project.topic else ""
-                prompt = (
-                    f"Research lab discussion - Round {round_num}/{rounds}.\n{topic_note}\n"
-                    f"Previous conversation:\n{prev_history}\n\n"
-                    f"Discuss the proposed research ideas. Comment on other team members' proposals. "
-                    f"Point out strengths, weaknesses, feasibility concerns, and potential improvements. "
-                    f"If you see a way to combine ideas, suggest it. Be constructive but honest. "
-                    f"{'Start narrowing down to the best 1-2 ideas.' if round_num >= 2 else ''} "
-                    f"{'This is the final discussion round. State your top pick clearly.' if round_num == rounds else ''}"
-                )
-                response = await self._call_agent(agent_key, agent["system_prompt"], prompt)
-                await self._save_message(db, project.id, agent_key, response, "discussion", round_num)
-                await db.flush()
-
-            await db.commit()
-
-    async def _run_decision(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] DECISION phase for project {project.id}")
-        history = await self._get_conversation_history(db, project.id, ["brainstorm", "discussion"])
-
-        prompt = (
-            f"As the Principal Investigator, review all proposed ideas and the team discussion:\n\n"
-            f"{history}\n\n"
-            f"Make the final decision. Choose ONE research idea to pursue. Provide:\n"
-            f"1. Selected idea title\n2. Why this idea over others\n3. High-level research plan\n"
-            f"4. Expected contributions\n5. Division of work (who does what)\n"
-            f"Be decisive and clear."
+        ref_count = await db.execute(
+            select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project.id)
         )
-        decision = await self._call_agent("aria", AGENTS["aria"]["system_prompt"], prompt)
-        await self._save_message(db, project.id, "aria", decision, "decision", 1)
-        await self._save_work(db, project.id, "aria", "decision", "Research Direction Decision", decision)
-        project.selected_idea = decision
+        if (ref_count.scalar() or 0) == 0 and project.topic:
+            await self._search_and_import_topic_papers(db, project)
 
-        for agent_key in ["marcus", "elena"]:
-            agent = AGENTS[agent_key]
-            ack_prompt = (
-                f"Prof. Aria has made the research decision:\n\n{decision}\n\n"
-                f"Acknowledge the decision and outline your specific plan for your part of the work. "
-                f"What will you focus on? What resources/data do you need?"
-            )
-            response = await self._call_agent(agent_key, agent["system_prompt"], ack_prompt)
-            await self._save_message(db, project.id, agent_key, response, "decision", 1)
-
-        await db.commit()
-
-    async def _run_methodology(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] METHODOLOGY phase for project {project.id}")
-        history = await self._get_conversation_history(db, project.id, ["decision"])
         paper_ctx = await self._get_project_paper_context(db, project)
 
-        elena_prompt = (
-            f"Research decision:\n{project.selected_idea}\n\n"
-            f"Available papers:\n{paper_ctx}\n\n"
-            f"Conduct a literature review for this research. Identify:\n"
-            f"1. Most relevant prior work (cite specific papers from our collection)\n"
-            f"2. How our approach differs from existing work\n"
-            f"3. Research gaps we are filling\n"
-            f"4. Theoretical foundations we build upon\n"
-            f"Write this as a structured Related Work section draft."
+        prompt = (
+            f"You are conducting a research study on: \"{project.topic or project.title}\"\n\n"
+            f"Reference papers from ArXiv:\n\n{paper_ctx}\n\n"
+            f"Based on these papers and your expertise, create a complete research plan.\n\n"
+            f"Your plan must include:\n"
+            f"1. **Literature Summary** — Key findings from the papers, identified gaps\n"
+            f"2. **Research Question** — A specific, testable question\n"
+            f"3. **Hypothesis** — What you expect to find and why\n"
+            f"4. **Experimental Design** — What RL environments to build and test\n"
+            f"5. **Expected Outcomes** — What would confirm/reject the hypothesis\n\n"
+            f"CRITICAL: At the end of your response, you MUST include a structured JSON block between "
+            f"===RESEARCH_PLAN=== and ===END_PLAN=== markers with this exact format:\n\n"
+            f"===RESEARCH_PLAN===\n"
+            f'{{\n'
+            f'  "hypothesis": "one sentence hypothesis",\n'
+            f'  "environments": [\n'
+            f'    {{\n'
+            f'      "name": "short descriptive name",\n'
+            f'      "description": "A detailed natural language description of the RL environment to build. '
+            f'Include what the agent observes, what actions it takes, how rewards work, and what makes it interesting. '
+            f'Be specific enough for an AI system to generate working Gymnasium-compatible Python code from this.",\n'
+            f'      "domain": "one of: control, game, finance, robotics, navigation, optimization, custom",\n'
+            f'      "difficulty": "easy or medium or hard"\n'
+            f'    }}\n'
+            f'  ],\n'
+            f'  "training_config": {{\n'
+            f'    "algorithms": ["PPO", "SAC"],\n'
+            f'    "timesteps": 50000\n'
+            f'  }},\n'
+            f'  "metrics": ["mean_reward", "success_rate", "convergence_speed"]\n'
+            f'}}\n'
+            f'===END_PLAN===\n\n'
+            f"Design exactly 2 environments that test different aspects of your hypothesis. "
+            f"The environment descriptions must be detailed enough for an AI to generate working Gymnasium code."
         )
-        lit_review = await self._call_agent("elena", AGENTS["elena"]["system_prompt"], elena_prompt)
-        await self._save_message(db, project.id, "elena", lit_review, "methodology", 1)
-        await self._save_work(db, project.id, "elena", "literature_review", "Literature Review", lit_review)
 
-        marcus_prompt = (
-            f"Research decision:\n{project.selected_idea}\n\n"
-            f"Literature review by Dr. Elena:\n{lit_review[:2000]}\n\n"
-            f"Design the experimental methodology. Specify:\n"
-            f"1. Proposed model/algorithm architecture\n"
-            f"2. Datasets (existing benchmarks or synthetic)\n"
-            f"3. Baselines to compare against\n"
-            f"4. Evaluation metrics\n"
-            f"5. Ablation studies planned\n"
-            f"6. Expected compute requirements\n"
-            f"Be specific and detailed."
-        )
-        exp_design = await self._call_agent("marcus", AGENTS["marcus"]["system_prompt"], marcus_prompt)
-        await self._save_message(db, project.id, "marcus", exp_design, "methodology", 1)
-        await self._save_work(db, project.id, "marcus", "experiment_design", "Experimental Design", exp_design)
+        response = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
+        await self._save_message(db, project.id, "sage", response, "research")
 
-        aria_prompt = (
-            f"Review the methodology proposed by the team:\n\n"
-            f"Literature Review (Elena):\n{lit_review[:1500]}\n\n"
-            f"Experimental Design (Marcus):\n{exp_design[:1500]}\n\n"
-            f"Provide feedback: Are there gaps? Missing baselines? Overlooked related work? "
-            f"Any methodological concerns? Approve or request changes."
-        )
-        review = await self._call_agent("aria", AGENTS["aria"]["system_prompt"], aria_prompt)
-        await self._save_message(db, project.id, "aria", review, "methodology", 1)
+        plan = self._parse_research_plan(response)
+        if plan:
+            project.selected_idea = json.dumps(plan)
+            await self._save_work(db, project.id, "sage", "research_plan", "Research Plan", response, metadata=plan)
+        else:
+            project.selected_idea = response
+            await self._save_work(db, project.id, "sage", "research_plan", "Research Plan", response)
 
         await db.commit()
 
-    async def _run_experiments(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] EXPERIMENTS phase for project {project.id}")
+    # ── Phase 2: Design ──────────────────────────────────────────
 
-        methodology_history = await self._get_conversation_history(db, project.id, ["methodology"])
+    async def _run_design(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] DESIGN phase for project {project.id}")
+        from app.services.architect_service import architect_service
+        from app.services.sandbox_runner import sandbox_runner
 
-        code_prompt = (
-            f"Based on the methodology:\n\n{methodology_history}\n\n"
-            f"Write complete Python experiment code that:\n"
-            f"1. Implements the proposed approach (can use synthetic/simulated data if real data unavailable)\n"
-            f"2. Runs the baselines\n"
-            f"3. Computes evaluation metrics\n"
-            f"4. Generates comparison tables (print them)\n"
-            f"5. Creates visualization charts using matplotlib (save as 'figure_1.png', 'figure_2.png', etc.)\n\n"
-            f"Use numpy, matplotlib. Generate realistic synthetic results that demonstrate the approach. "
-            f"The code must be self-contained and runnable. Output only Python code, no explanations."
+        plan = self._parse_research_plan(project.selected_idea or "")
+        env_specs = plan.get("environments", [])
+
+        if not env_specs:
+            history = await self._get_conversation_history(db, project.id, ["research"])
+            fallback_prompt = (
+                f"Based on this research plan:\n\n{history[:4000]}\n\n"
+                f"Design 2 RL environments for this study. For each, provide:\n"
+                f'Return a JSON array: [{{"name": "...", "description": "detailed description for generating '
+                f'a Gymnasium-compatible environment", "domain": "...", "difficulty": "medium"}}]\n'
+                f"Return ONLY the JSON array, no other text."
+            )
+            atlas_response = await self._call_agent("atlas", AGENTS["atlas"]["system_prompt"], fallback_prompt)
+            try:
+                match = re.search(r'\[.*\]', atlas_response, re.DOTALL)
+                if match:
+                    env_specs = json.loads(match.group())
+            except (json.JSONDecodeError, AttributeError):
+                pass
+            if not env_specs:
+                env_specs = [{
+                    "name": f"{project.topic or project.title} Env",
+                    "description": project.topic or project.title,
+                    "domain": "custom", "difficulty": "medium",
+                }]
+
+        await self._save_message(
+            db, project.id, "atlas",
+            f"Building **{len(env_specs)}** environments for the study...",
+            "design"
         )
-        code = await self._call_agent("marcus", AGENTS["marcus"]["system_prompt"], code_prompt)
-        code_clean = code.strip()
-        if code_clean.startswith("```"):
-            lines = code_clean.split("\n")
-            lines = lines[1:]  # remove ```python
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            code_clean = "\n".join(lines)
+        await db.commit()
 
-        await self._save_work(db, project.id, "marcus", "code", "Experiment Code", code_clean)
-        await self._save_message(db, project.id, "marcus", f"I've written the experiment code. Running it now...", "experiments", 1)
+        generated_envs = []
+        for i, spec in enumerate(env_specs[:3]):
+            env_name = spec.get("name", f"Research Env {i+1}")
+            env_desc = spec.get("description", env_name)
+            env_domain = spec.get("domain", "custom")
+            env_difficulty = spec.get("difficulty", "medium")
 
-        exec_result = self._execute_code_safely(code_clean)
+            await self._save_message(
+                db, project.id, "atlas",
+                f"**Environment {i+1}/{len(env_specs[:3])}:** Generating *{env_name}*...",
+                "design"
+            )
+            await db.commit()
 
-        figures_meta = []
-        if exec_result.get("figures"):
-            for fig in exec_result["figures"]:
-                figures_meta.append({"filename": fig["filename"], "data": fig["data"]})
+            try:
+                gen = await architect_service.generate_env_code(env_desc, env_domain, env_difficulty)
+                code = gen.get("code", "")
+                spec_json = json.dumps(gen.get("env_spec", {})) if isinstance(gen.get("env_spec"), dict) else gen.get("env_spec", "{}")
 
-        results_content = f"**Execution {'succeeded' if exec_result['success'] else 'failed'}**\n\n"
-        if exec_result["stdout"]:
-            results_content += f"**Output:**\n```\n{exec_result['stdout']}\n```\n\n"
-        if exec_result["stderr"]:
-            results_content += f"**Errors:**\n```\n{exec_result['stderr']}\n```\n\n"
-        if figures_meta:
-            results_content += f"**Generated {len(figures_meta)} figure(s)**\n"
+                if not code:
+                    raise ValueError("No code generated")
 
-        await self._save_work(db, project.id, "marcus", "results", "Experiment Results", results_content, metadata={"figures": figures_meta} if figures_meta else None)
-        await self._save_message(db, project.id, "marcus", results_content, "experiments", 2)
+                test_results = await sandbox_runner.run_all_tests(code)
+                log_lines = [f"Initial: {test_results['passed']}/{test_results['total']} tests passed"]
 
-        analysis_prompt = (
-            f"Analyze these experiment results:\n\n{results_content}\n\n"
-            f"Provide:\n1. Key findings\n2. Statistical interpretation\n3. Comparison with baselines\n"
-            f"4. Strengths and limitations of results\n5. Any surprising observations"
+                attempts = 0
+                max_fix = 2 if test_results["passed"] < 6 else 1
+                while test_results["failed"] > 0 and attempts < max_fix:
+                    attempts += 1
+                    fixed = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results))
+                    if fixed and fixed != code:
+                        code = fixed
+                        test_results = await sandbox_runner.run_all_tests(code)
+                        log_lines.append(f"Fix {attempts}: {test_results['passed']}/{test_results['total']} tests passed")
+                    else:
+                        break
+
+                slug_base = self._slugify(gen.get("name", env_name))
+                existing_slug = await db.execute(select(RLEnvironment).where(RLEnvironment.slug == slug_base))
+                if existing_slug.scalar_one_or_none():
+                    slug_base = f"{slug_base}-{int(datetime.utcnow().timestamp())}"
+
+                env = RLEnvironment(
+                    name=gen.get("name", env_name),
+                    slug=slug_base,
+                    description=gen.get("description", env_desc),
+                    category=env_domain, domain=env_domain,
+                    observation_space=gen.get("observation_space", ""),
+                    action_space=gen.get("action_space", ""),
+                    reward_description=gen.get("reward_description", ""),
+                    code=code,
+                    env_spec_json=spec_json,
+                    test_results_json=json.dumps(test_results),
+                    difficulty=env_difficulty,
+                    status="published",
+                    generation_log="\n".join(log_lines),
+                    user_id=project.user_id,
+                    research_project_id=project.id,
+                )
+                db.add(env)
+                await db.flush()
+
+                v1 = EnvVersion(env_id=env.id, version=1, code=code, spec_json=spec_json,
+                                change_summary="Generated by Research Lab")
+                db.add(v1)
+                await db.flush()
+
+                generated_envs.append({
+                    "id": env.id, "name": env.name,
+                    "tests_passed": test_results["passed"],
+                    "tests_total": test_results["total"],
+                })
+                await self._save_message(
+                    db, project.id, "atlas",
+                    f"**{env.name}** — {test_results['passed']}/{test_results['total']} tests passed",
+                    "design"
+                )
+            except Exception as e:
+                logger.error(f"[Lab] Failed to generate env '{env_name}': {e}")
+                await self._save_message(
+                    db, project.id, "atlas",
+                    f"Failed to generate **{env_name}**: {str(e)[:300]}",
+                    "design"
+                )
+            await db.commit()
+
+        summary = f"**Design complete.** {len(generated_envs)}/{len(env_specs[:3])} environments built.\n"
+        for e in generated_envs:
+            summary += f"- **{e['name']}** (ID: {e['id']}) — {e['tests_passed']}/{e['tests_total']} tests\n"
+
+        await self._save_message(db, project.id, "atlas", summary, "design")
+        await self._save_work(
+            db, project.id, "atlas", "environments",
+            "Generated Environments", summary,
+            metadata={"environments": generated_envs}
         )
-        analysis = await self._call_agent("elena", AGENTS["elena"]["system_prompt"], analysis_prompt)
-        await self._save_message(db, project.id, "elena", analysis, "experiments", 3)
-        await self._save_work(db, project.id, "elena", "analysis", "Results Analysis", analysis)
+        await db.commit()
+
+    # ── Phase 3: Experiment ──────────────────────────────────────
+
+    async def _run_experiment(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] EXPERIMENT phase for project {project.id}")
+        from app.services.training_service import training_service
+
+        result = await db.execute(
+            select(RLEnvironment).where(RLEnvironment.research_project_id == project.id)
+        )
+        environments = result.scalars().all()
+
+        if not environments:
+            await self._save_message(db, project.id, "atlas", "No environments available. Skipping training.", "experiment")
+            await db.commit()
+            return
+
+        plan = self._parse_research_plan(project.selected_idea or "")
+        tc = plan.get("training_config", {})
+        timesteps = tc.get("timesteps", 50000)
+        requested_algos = [a.upper() for a in tc.get("algorithms", []) if a.upper() in ("PPO", "SAC", "DQN")]
+
+        run_ids = []
+        for env in environments:
+            auto_algo = training_service._select_algorithm(env.code or "")
+            algos = [auto_algo]
+            for a in requested_algos:
+                if a != auto_algo and a not in algos:
+                    algos.append(a)
+                    break
+            if len(algos) < 2:
+                backup = "DQN" if auto_algo not in ("DQN",) else "PPO"
+                if backup not in algos:
+                    algos.append(backup)
+
+            for algo in algos:
+                config = {"total_timesteps": timesteps, "algorithm": algo, "n_eval_episodes": 10}
+                try:
+                    run = await training_service.start_training(env.id, config, db)
+                    run_ids.append(run.id)
+                    await self._save_message(
+                        db, project.id, "atlas",
+                        f"Training **{algo}** on **{env.name}** ({timesteps:,} timesteps)...",
+                        "experiment"
+                    )
+                except Exception as e:
+                    await self._save_message(
+                        db, project.id, "atlas",
+                        f"Failed to start {algo} on {env.name}: {str(e)[:200]}",
+                        "experiment"
+                    )
+
+        if not run_ids:
+            await self._save_message(db, project.id, "atlas", "All training runs failed to start.", "experiment")
+            await db.commit()
+            return
 
         await db.commit()
 
-    async def _run_writing(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] WRITING phase for project {project.id}")
+        await self._save_message(
+            db, project.id, "atlas",
+            f"**{len(run_ids)} training run(s) started.** Waiting for completion...",
+            "experiment"
+        )
+        await db.commit()
 
-        all_history = await self._get_conversation_history(db, project.id)
+        # Poll until all training completes
+        max_wait = 1200
+        elapsed = 0
+        while elapsed < max_wait:
+            await asyncio.sleep(15)
+            elapsed += 15
+
+            all_done = True
+            async with async_session() as poll_db:
+                for rid in run_ids:
+                    r = await poll_db.execute(select(TrainingRun.status).where(TrainingRun.id == rid))
+                    status = r.scalar()
+                    if status in ("pending", "running"):
+                        all_done = False
+                        break
+            if all_done:
+                break
+
+        # Collect results
+        results_data = []
+        async with async_session() as rdb:
+            for rid in run_ids:
+                r = await rdb.execute(select(TrainingRun).where(TrainingRun.id == rid))
+                run = r.scalar_one_or_none()
+                if not run:
+                    continue
+                er = await rdb.execute(select(RLEnvironment.name).where(RLEnvironment.id == run.env_id))
+                env_name = er.scalar() or f"Env {run.env_id}"
+                res = json.loads(run.results_json) if run.results_json else {}
+                curve = json.loads(run.training_curve_json) if run.training_curve_json else []
+                results_data.append({
+                    "run_id": run.id, "env_id": run.env_id, "env_name": env_name,
+                    "algorithm": run.algorithm, "status": run.status,
+                    "mean_reward": res.get("mean_reward"), "std_reward": res.get("std_reward"),
+                    "success_rate": res.get("success_rate"),
+                    "training_time_sec": res.get("training_time_sec"),
+                    "episodes_trained": res.get("episodes_trained"),
+                    "total_timesteps": res.get("total_timesteps", timesteps),
+                    "curve_length": len(curve),
+                    "error": res.get("error"),
+                })
+
+        summary = "## Experiment Results\n\n"
+        completed = sum(1 for r in results_data if r["status"] == "completed")
+        failed = sum(1 for r in results_data if r["status"] == "failed")
+        summary += f"**{completed} completed, {failed} failed** out of {len(results_data)} runs.\n\n"
+
+        for r in results_data:
+            icon = "completed" if r["status"] == "completed" else "FAILED"
+            summary += f"### [{icon}] {r['env_name']} — {r['algorithm']}\n"
+            if r["status"] == "completed":
+                summary += f"- Mean Reward: **{r['mean_reward']}** (std: {r['std_reward']})\n"
+                summary += f"- Success Rate: **{r['success_rate']}**\n"
+                summary += f"- Training Time: {r['training_time_sec']}s | Episodes: {r['episodes_trained']}\n"
+                summary += f"- Timesteps: {r['total_timesteps']:,} | Curve Points: {r['curve_length']}\n"
+            else:
+                summary += f"- Error: {(r.get('error') or 'Unknown')[:200]}\n"
+            summary += "\n"
+
+        await self._save_message(db, project.id, "atlas", summary, "experiment")
+        await self._save_work(
+            db, project.id, "atlas", "training_results",
+            "Training Results", summary, metadata={"runs": results_data}
+        )
+        await db.commit()
+
+    # ── Phase 4: Analyze ─────────────────────────────────────────
+
+    async def _run_analyze(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] ANALYZE phase for project {project.id}")
+
+        work_result = await db.execute(
+            select(AgentWork).where(
+                AgentWork.project_id == project.id,
+                AgentWork.work_type == "training_results"
+            ).order_by(AgentWork.created_at.desc())
+        )
+        training_work = work_result.scalars().first()
+        results_text = training_work.content if training_work else "No training results available."
+        results_meta = json.loads(training_work.metadata_json) if training_work and training_work.metadata_json else {}
+
+        # Get training curve summaries
+        curve_summaries = []
+        for r in results_meta.get("runs", []):
+            if r.get("status") == "completed":
+                try:
+                    async with async_session() as cdb:
+                        cr = await cdb.execute(
+                            select(TrainingRun.training_curve_json).where(TrainingRun.id == r["run_id"])
+                        )
+                        curve_json = cr.scalar()
+                        if curve_json:
+                            curve = json.loads(curve_json)
+                            if len(curve) >= 2:
+                                first = curve[0].get("mean_reward", 0)
+                                mid = curve[len(curve)//2].get("mean_reward", 0)
+                                last = curve[-1].get("mean_reward", 0)
+                                curve_summaries.append(
+                                    f"  {r['env_name']} + {r['algorithm']}: "
+                                    f"start={first}, mid={mid}, final={last}, "
+                                    f"improvement={round(last - first, 4)}"
+                                )
+                except Exception:
+                    pass
+
+        curve_ctx = "\n".join(curve_summaries) if curve_summaries else "No curve data."
+
+        research_history = await self._get_conversation_history(db, project.id, ["research"])
+
+        prompt = (
+            f"You are analyzing REAL experimental results from actual RL training runs.\n\n"
+            f"**Original Research Plan:**\n{research_history[:3000]}\n\n"
+            f"**Training Results:**\n{results_text}\n\n"
+            f"**Training Curve Progression:**\n{curve_ctx}\n\n"
+            f"Provide a thorough analysis:\n"
+            f"1. **Key Findings** — What do the results show?\n"
+            f"2. **Algorithm Comparison** — How do algorithms compare on each environment?\n"
+            f"3. **Hypothesis Evaluation** — Was the hypothesis supported, refuted, or inconclusive?\n"
+            f"4. **Convergence Analysis** — How quickly did each algorithm learn? Learning dynamics?\n"
+            f"5. **Strengths & Limitations** — What worked and what didn't?\n"
+            f"6. **Conclusions** — Key takeaways for the research community\n\n"
+            f"Be rigorous and specific. These are real results from actual training, not simulations."
+        )
+
+        analysis = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
+        await self._save_message(db, project.id, "sage", analysis, "analyze")
+        await self._save_work(db, project.id, "sage", "analysis", "Results Analysis", analysis)
+        await db.commit()
+
+    # ── Phase 5: Write ───────────────────────────────────────────
+
+    async def _run_write(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] WRITE phase for project {project.id}")
 
         works_result = await db.execute(
             select(AgentWork).where(AgentWork.project_id == project.id).order_by(AgentWork.created_at)
         )
         all_works = works_result.scalars().all()
-        works_text = "\n\n---\n\n".join([f"[{w.work_type} by {w.agent_name}] {w.title}\n{w.content[:2000]}" for w in all_works])
+        works_text = "\n\n---\n\n".join([
+            f"[{w.work_type}] {w.title}\n{w.content[:3000]}" for w in all_works
+        ])
 
-        elena_sections_prompt = (
-            f"Write the following sections of the research paper based on all our work:\n\n"
-            f"{works_text}\n\n"
-            f"Write these sections in proper academic style:\n"
-            f"1. **Abstract** (150-250 words)\n"
-            f"2. **1. Introduction** (motivation, problem statement, contributions)\n"
-            f"3. **2. Related Work** (based on the literature review)\n"
-            f"4. **6. Discussion** (implications, limitations, future work)\n"
-            f"5. **7. Conclusion**\n\n"
-            f"Use markdown formatting. Be thorough and precise."
+        envs_result = await db.execute(
+            select(RLEnvironment).where(RLEnvironment.research_project_id == project.id)
         )
-        elena_sections = await self._call_agent("elena", AGENTS["elena"]["system_prompt"], elena_sections_prompt)
-        await self._save_message(db, project.id, "elena", "I've drafted the Abstract, Introduction, Related Work, Discussion, and Conclusion.", "writing", 1)
-        await self._save_work(db, project.id, "elena", "paper_section", "Paper Sections (Elena)", elena_sections)
+        envs = envs_result.scalars().all()
+        env_descriptions = []
+        for env in envs:
+            env_descriptions.append(
+                f"**{env.name}** (domain: {env.domain}, difficulty: {env.difficulty})\n"
+                f"- Observation Space: {env.observation_space}\n"
+                f"- Action Space: {env.action_space}\n"
+                f"- Reward: {env.reward_description}\n"
+            )
+        env_ctx = "\n\n".join(env_descriptions) if env_descriptions else "No environment details."
 
-        marcus_sections_prompt = (
-            f"Write the following sections of the research paper based on all our work:\n\n"
-            f"{works_text}\n\n"
-            f"Write these sections in proper academic style:\n"
-            f"1. **3. Methodology** (detailed description of our approach)\n"
-            f"2. **4. Experimental Setup** (datasets, baselines, metrics, hyperparameters)\n"
-            f"3. **5. Results** (present findings with tables and analysis)\n\n"
-            f"Include result tables in markdown format. Reference figures where applicable. "
-            f"Use markdown formatting. Be technical and precise."
+        paper_ctx = await self._get_project_paper_context(db, project)
+
+        prompt = (
+            f"Write a complete research paper based on ALL the work done in this study.\n\n"
+            f"**Research Topic:** {project.topic or project.title}\n\n"
+            f"**All Research Work (literature, experiments, analysis):**\n{works_text}\n\n"
+            f"**Generated RL Environments (real, tested, functional):**\n{env_ctx}\n\n"
+            f"**Reference Papers from ArXiv:**\n{paper_ctx[:3000]}\n\n"
+            f"Write the complete paper with:\n"
+            f"1. **Title** (descriptive, academic)\n"
+            f"2. **Abstract** (150-250 words)\n"
+            f"3. **1. Introduction** (motivation, problem, contributions)\n"
+            f"4. **2. Related Work** (cite reference papers by title)\n"
+            f"5. **3. Methodology** (environment design rationale, algorithm selection)\n"
+            f"6. **4. Experimental Setup** (concrete environments, algorithms, hyperparameters, metrics)\n"
+            f"7. **5. Results** (present real training data, compare algorithms)\n"
+            f"8. **6. Discussion** (implications, limitations, future work)\n"
+            f"9. **7. Conclusion**\n"
+            f"10. **References**\n\n"
+            f"This paper is based on REAL experiments with actual training data from generated environments. "
+            f"Reference specific environments, algorithms, and metrics. Use markdown formatting."
         )
-        marcus_sections = await self._call_agent("marcus", AGENTS["marcus"]["system_prompt"], marcus_sections_prompt)
-        await self._save_message(db, project.id, "marcus", "I've drafted the Methodology, Experimental Setup, and Results sections.", "writing", 1)
-        await self._save_work(db, project.id, "marcus", "paper_section", "Paper Sections (Marcus)", marcus_sections)
 
-        integration_prompt = (
-            f"As the PI, integrate these paper sections into a complete, coherent research paper.\n\n"
-            f"Sections from Dr. Elena:\n{elena_sections}\n\n"
-            f"Sections from Dr. Marcus:\n{marcus_sections}\n\n"
-            f"Create the final integrated paper with:\n"
-            f"- A clear title\n"
-            f"- Consistent notation and terminology\n"
-            f"- Smooth transitions between sections\n"
-            f"- Proper section numbering\n"
-            f"- References section at the end\n\n"
-            f"Output the complete paper in markdown format, ready for ArXiv submission."
-        )
-        full_paper = await self._call_agent("aria", AGENTS["aria"]["system_prompt"], integration_prompt)
-        await self._save_message(db, project.id, "aria", "I've integrated all sections into the final paper draft.", "writing", 2)
+        paper_content = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
+        await self._save_message(db, project.id, "sage", "Paper draft complete.", "write")
 
-        title_line = full_paper.split("\n")[0].replace("#", "").strip() if full_paper else project.title
+        lines = paper_content.split("\n")
+        title = project.title
+        for line in lines[:5]:
+            clean = line.replace("#", "").strip()
+            if clean and len(clean) > 10:
+                title = clean
+                break
+
         abstract = ""
-        if "abstract" in full_paper.lower():
-            idx = full_paper.lower().index("abstract")
-            chunk = full_paper[idx:idx+2000]
-            lines = chunk.split("\n")
+        lower = paper_content.lower()
+        if "abstract" in lower:
+            idx = lower.index("abstract")
+            chunk = paper_content[idx:idx+2000]
             abs_lines = []
             started = False
-            for line in lines:
+            for line in chunk.split("\n"):
                 if "abstract" in line.lower():
                     started = True
                     continue
@@ -597,137 +794,71 @@ class LabService:
             abstract = "\n".join(abs_lines).strip()
 
         paper = ResearchPaper(
-            project_id=project.id,
-            title=title_line or project.title,
-            abstract=abstract,
-            content=full_paper,
-            status="draft",
-            version=1,
+            project_id=project.id, title=title,
+            abstract=abstract, content=paper_content,
+            status="draft", version=1,
         )
         db.add(paper)
         await db.commit()
+
+    # ── Phase 6: Review ──────────────────────────────────────────
 
     async def _run_review(self, db: AsyncSession, project: ResearchProject):
         logger.info(f"[Lab] REVIEW phase for project {project.id}")
 
         paper_result = await db.execute(
-            select(ResearchPaper).where(ResearchPaper.project_id == project.id).order_by(ResearchPaper.created_at.desc())
+            select(ResearchPaper).where(ResearchPaper.project_id == project.id)
+            .order_by(ResearchPaper.created_at.desc())
         )
         paper = paper_result.scalars().first()
         if not paper:
-            logger.error("No paper found for review")
+            await self._save_message(db, project.id, "sage", "No paper found to review.", "review")
+            project.status = "completed"
+            await db.commit()
             return
 
-        paper_text = paper.content[:6000]
-
-        for agent_key in ["marcus", "elena"]:
-            agent = AGENTS[agent_key]
-            review_prompt = (
-                f"Review this research paper draft:\n\n{paper_text}\n\n"
-                f"Provide a structured review:\n"
-                f"1. **Summary**: Brief summary of the paper\n"
-                f"2. **Strengths**: What is done well\n"
-                f"3. **Weaknesses**: What needs improvement\n"
-                f"4. **Questions**: Clarifications needed\n"
-                f"5. **Suggestions**: Specific improvements\n"
-                f"6. **Overall Assessment**: Accept / Minor Revision / Major Revision\n"
-                f"Be thorough and constructive."
-            )
-            review = await self._call_agent(agent_key, agent["system_prompt"], review_prompt)
-            await self._save_message(db, project.id, agent_key, review, "review", 1)
-            await self._save_work(db, project.id, agent_key, "review", f"Paper Review by {agent['name']}", review)
-
-        reviews_history = await self._get_conversation_history(db, project.id, ["review"])
-        aria_prompt = (
-            f"Reviews from the team:\n\n{reviews_history}\n\n"
-            f"As PI, summarize the reviews and make the final decision:\n"
-            f"- If reviews are mostly positive: Accept the paper as final.\n"
-            f"- If major issues found and revision count < 2: Request revision.\n"
-            f"Current revision count: {project.revision_count}\n\n"
-            f"State your decision clearly: ACCEPT or REVISION_NEEDED"
+        prompt = (
+            f"Review this research paper draft critically:\n\n{paper.content[:8000]}\n\n"
+            f"Provide:\n"
+            f"1. **Summary** — Brief summary of the paper\n"
+            f"2. **Strengths** — What is done well\n"
+            f"3. **Weaknesses** — What needs improvement\n"
+            f"4. **Assessment** — ACCEPT (minor issues only) or REVISION_NEEDED (significant issues)\n\n"
+            f"Current revision count: {project.revision_count}\n"
+            f"Be constructive and specific."
         )
-        decision = await self._call_agent("aria", AGENTS["aria"]["system_prompt"], aria_prompt)
-        await self._save_message(db, project.id, "aria", decision, "review", 2)
 
-        if "REVISION_NEEDED" in decision.upper() and project.revision_count < 2:
+        review = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
+        await self._save_message(db, project.id, "sage", review, "review")
+        await self._save_work(db, project.id, "sage", "review", "Paper Review", review)
+
+        if "REVISION_NEEDED" in review.upper() and project.revision_count < 1:
             project.revision_count += 1
-            project.current_phase = "writing"
+            project.current_phase = "write"
             paper.status = "revision"
-            logger.info(f"[Lab] Revision requested (count: {project.revision_count})")
         else:
             paper.status = "final"
             project.status = "completed"
-            logger.info(f"[Lab] Paper accepted as final")
+            await self._save_message(
+                db, project.id, "sage",
+                "**Research study complete.** The paper has been accepted.",
+                "review"
+            )
 
         await db.commit()
 
-    # ─── Code Execution Sandbox ──────────────────────────────────────
+    # ── Public API ───────────────────────────────────────────────
 
-    @staticmethod
-    def _execute_code_safely(code: str, timeout: int = 30) -> dict:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            script_path = os.path.join(tmpdir, "experiment.py")
-            output_dir = os.path.join(tmpdir, "output")
-            os.makedirs(output_dir, exist_ok=True)
-
-            safe_code = (
-                "import sys, os\n"
-                f"os.chdir(r'{output_dir}')\n"
-                "import numpy as np\n"
-                "import json, math, random\n"
-                "import matplotlib\n"
-                "matplotlib.use('Agg')\n"
-                "import matplotlib.pyplot as plt\n\n"
-                f"{code}\n"
-            )
-
-            with open(script_path, "w") as f:
-                f.write(safe_code)
-
-            try:
-                result = subprocess.run(
-                    [sys.executable, script_path],
-                    capture_output=True, text=True,
-                    timeout=timeout, cwd=output_dir,
-                )
-
-                figures = []
-                for fname in sorted(os.listdir(output_dir)):
-                    if fname.endswith((".png", ".jpg", ".svg")):
-                        fpath = os.path.join(output_dir, fname)
-                        with open(fpath, "rb") as img:
-                            figures.append({
-                                "filename": fname,
-                                "data": base64.b64encode(img.read()).decode(),
-                            })
-
-                return {
-                    "success": result.returncode == 0,
-                    "stdout": result.stdout[:5000],
-                    "stderr": result.stderr[:2000],
-                    "figures": figures,
-                }
-            except subprocess.TimeoutExpired:
-                return {"success": False, "stdout": "", "stderr": "Execution timed out (30s)", "figures": []}
-            except Exception as e:
-                return {"success": False, "stdout": "", "stderr": str(e), "figures": []}
-
-    # ─── Public API ──────────────────────────────────────────────────
-
-    async def create_project(self, db: AsyncSession, title: str, description: Optional[str] = None, topic: Optional[str] = None) -> ResearchProject:
-        project = ResearchProject(title=title, description=description, topic=topic)
+    async def create_project(self, db: AsyncSession, title: str, description: Optional[str] = None,
+                             topic: Optional[str] = None, user_id: Optional[int] = None) -> ResearchProject:
+        project = ResearchProject(title=title, description=description, topic=topic, user_id=user_id)
         db.add(project)
         await db.commit()
         await db.refresh(project)
-        logger.info(f"[Lab] Created project: {title} (id={project.id}, topic={topic})")
+        logger.info(f"[Lab] Created project: {title} (id={project.id})")
 
         if topic:
             await self._search_and_import_topic_papers(db, project, min_papers=10)
-        else:
-            all_arts = await db.execute(select(Article).order_by(Article.added_at.desc()).limit(30))
-            for art in all_arts.scalars().all():
-                db.add(ProjectReference(project_id=project.id, article_id=art.id))
-            await db.commit()
 
         return project
 
@@ -743,12 +874,11 @@ class LabService:
         logger.info(f"[Lab] Running phase: {phase} for project {project.id}")
 
         runners = {
-            "brainstorm": self._run_brainstorm,
-            "discussion": self._run_discussion,
-            "decision": self._run_decision,
-            "methodology": self._run_methodology,
-            "experiments": self._run_experiments,
-            "writing": self._run_writing,
+            "research": self._run_research,
+            "design": self._run_design,
+            "experiment": self._run_experiment,
+            "analyze": self._run_analyze,
+            "write": self._run_write,
             "review": self._run_review,
         }
 
@@ -756,7 +886,16 @@ class LabService:
         if not runner:
             return {"error": f"Unknown phase: {phase}"}
 
-        await runner(db, project)
+        try:
+            await runner(db, project)
+        except Exception as e:
+            logger.exception(f"[Lab] Phase {phase} failed for project {project.id}")
+            try:
+                await self._save_message(db, project.id, "sage", f"Phase failed: {str(e)[:500]}", phase)
+                await db.commit()
+            except Exception:
+                pass
+            return {"error": str(e), "phase": phase}
 
         if project.status != "completed" and phase in PHASES:
             idx = PHASES.index(phase)
@@ -776,7 +915,7 @@ class LabService:
 
     async def run_all_phases(self, db: AsyncSession, project_id: int) -> dict:
         results = []
-        for _ in range(len(PHASES) + 2):  # +2 for possible revisions
+        for _ in range(len(PHASES) + 2):
             result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
             project = result.scalar_one_or_none()
             if not project or project.status == "completed":
@@ -793,31 +932,72 @@ class LabService:
         if not project:
             return None
 
-        msg_count = await db.execute(
-            select(func.count(AgentMessage.id)).where(AgentMessage.project_id == project_id)
-        )
-        work_count = await db.execute(
-            select(func.count(AgentWork.id)).where(AgentWork.project_id == project_id)
-        )
-        ref_count = await db.execute(
-            select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project_id)
-        )
+        msg_count = await db.execute(select(func.count(AgentMessage.id)).where(AgentMessage.project_id == project_id))
+        work_count = await db.execute(select(func.count(AgentWork.id)).where(AgentWork.project_id == project_id))
+        ref_count = await db.execute(select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project_id))
+        env_count = await db.execute(select(func.count(RLEnvironment.id)).where(RLEnvironment.research_project_id == project_id))
 
         return {
-            "id": project.id,
-            "title": project.title,
-            "description": project.description,
-            "topic": project.topic,
-            "status": project.status,
-            "current_phase": project.current_phase,
+            "id": project.id, "title": project.title,
+            "description": project.description, "topic": project.topic,
+            "status": project.status, "current_phase": project.current_phase,
             "selected_idea": project.selected_idea,
             "revision_count": project.revision_count,
-            "created_at": project.created_at,
-            "updated_at": project.updated_at,
+            "created_at": project.created_at, "updated_at": project.updated_at,
             "message_count": msg_count.scalar() or 0,
             "work_count": work_count.scalar() or 0,
             "reference_count": ref_count.scalar() or 0,
+            "environment_count": env_count.scalar() or 0,
         }
+
+    async def get_project_environments(self, db: AsyncSession, project_id: int) -> list:
+        result = await db.execute(
+            select(RLEnvironment).where(RLEnvironment.research_project_id == project_id)
+            .order_by(RLEnvironment.created_at)
+        )
+        envs = result.scalars().all()
+        return [
+            {
+                "id": e.id, "name": e.name, "slug": e.slug,
+                "description": e.description, "domain": e.domain,
+                "observation_space": e.observation_space,
+                "action_space": e.action_space,
+                "reward_description": e.reward_description,
+                "difficulty": e.difficulty, "status": e.status,
+                "test_results": json.loads(e.test_results_json) if e.test_results_json else None,
+            }
+            for e in envs
+        ]
+
+    async def get_project_training_runs(self, db: AsyncSession, project_id: int) -> list:
+        env_ids_result = await db.execute(
+            select(RLEnvironment.id).where(RLEnvironment.research_project_id == project_id)
+        )
+        env_ids = [r[0] for r in env_ids_result.fetchall()]
+        if not env_ids:
+            return []
+
+        runs_result = await db.execute(
+            select(TrainingRun).where(TrainingRun.env_id.in_(env_ids)).order_by(TrainingRun.created_at)
+        )
+        runs = runs_result.scalars().all()
+        out = []
+        for run in runs:
+            er = await db.execute(select(RLEnvironment.name).where(RLEnvironment.id == run.env_id))
+            env_name = er.scalar() or f"Env {run.env_id}"
+            res = json.loads(run.results_json) if run.results_json else {}
+            curve = json.loads(run.training_curve_json) if run.training_curve_json else []
+            out.append({
+                "id": run.id, "env_id": run.env_id, "env_name": env_name,
+                "algorithm": run.algorithm, "status": run.status,
+                "mean_reward": res.get("mean_reward"), "success_rate": res.get("success_rate"),
+                "training_time_sec": res.get("training_time_sec"),
+                "total_timesteps": res.get("total_timesteps"),
+                "curve": curve,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            })
+        return out
 
     async def get_chatboard(self, db: AsyncSession, project_id: int) -> List[AgentMessage]:
         result = await db.execute(
