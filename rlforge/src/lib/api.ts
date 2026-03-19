@@ -239,6 +239,14 @@ export async function githubExport(envId: number, repoName: string, description:
   });
 }
 
+export async function runLabPhase(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/run-phase`, { method: "POST" });
+}
+
+export async function runLabAll(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/run-all`, { method: "POST" });
+}
+
 export async function getPublicProfile(username: string) {
   return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
 }
