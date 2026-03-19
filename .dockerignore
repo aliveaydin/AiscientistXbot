@@ -9,3 +9,4 @@ frontend/dist/
 *.md
 .DS_Store
 terminals/
+rlforge/.env.local
