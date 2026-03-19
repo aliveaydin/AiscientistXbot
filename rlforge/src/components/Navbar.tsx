@@ -6,10 +6,10 @@ import { Menu, X, LogOut } from "lucide-react";
 import { useAuth, SignInButton, UserButton } from "@clerk/nextjs";
 
 const publicLinks = [
-  { href: "/environments", label: "Environments" },
-  { href: "/blog", label: "Blog" },
+  { href: "/environments", label: "Environment Generation" },
   { href: "/research", label: "Research Lab" },
-  { href: "/docs", label: "Docs" },
+  { href: "/docs", label: "Documentation" },
+  { href: "/blog", label: "Blog" },
 ];
 
 export function Navbar() {

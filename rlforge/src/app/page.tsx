@@ -40,19 +40,19 @@ export default function Home() {
           Design the Experience.<br />
           <span className="text-[#888]">Train the Intelligence.</span>
         </h1>
-        <p className="text-xl md:text-2xl text-[#888] mt-6 max-w-2xl leading-relaxed">
-          Design, Train, and Experiment with RL
+        <p className="text-lg md:text-xl text-[#888] mt-6 max-w-2xl leading-relaxed">
+          Generate RL environments. Train agents. Run experiments. Create papers.
         </p>
         <p className="text-sm text-[#555] mt-4 max-w-xl leading-relaxed">
-          Generate Gymnasium environments with AI, iterate through chat,
-          train agents, and track experiments with version-controlled reports.
+          Describe what you need in plain English. The AI builds Gymnasium-compatible code,
+          trains agents with SB3, tracks experiments, and writes research papers with real data.
         </p>
         <div className="flex flex-wrap gap-4 mt-10 justify-center">
           <Link href="/create" className="px-7 py-3.5 bg-white text-black text-sm font-medium rounded-lg hover:bg-[#e5e5e5] transition-colors">
             Start Building
           </Link>
-          <Link href="/catalog" className="px-7 py-3.5 border border-[#333] text-sm rounded-lg hover:border-[#555] transition-colors text-[#888] hover:text-white">
-            Browse Environments
+          <Link href="/environments" className="px-7 py-3.5 border border-[#333] text-sm rounded-lg hover:border-[#555] transition-colors text-[#888] hover:text-white">
+            Learn More
           </Link>
         </div>
         <div className="flex flex-wrap gap-3 mt-12 justify-center">
@@ -174,9 +174,9 @@ export default function Home() {
             <div className="text-[#555]"><Brain size={20} /></div>
             <h3 className="text-xl font-bold">AI Research Lab</h3>
             <p className="text-sm text-[#888] leading-relaxed max-w-md">
-              A multi-agent AI research team collaborates on ideas, finds consensus,
-              and writes PhD-level papers with simulated experiments, code, and charts.
-              All in ArXiv-ready format.
+              Two AI agents — Sage and Atlas — run a full research pipeline:
+              search ArXiv, design environments, train real agents, analyze results,
+              and write complete papers backed by actual experimental data.
             </p>
             <Link href="/research" className="inline-flex items-center gap-1.5 text-sm text-white hover:text-[#ccc] transition-colors mt-2">
               Explore Research Lab <ArrowRight size={14} />
@@ -543,47 +543,48 @@ function MockResearchLab() {
     <div className="border border-[#1a1a1a] rounded-xl bg-[#0a0a0a] overflow-hidden">
       <div className="border-b border-[#1a1a1a] px-3 py-2 flex items-center gap-2">
         <Brain size={12} className="text-[#555]" />
-        <span className="text-[10px] text-[#888]">Research Lab — Multi-Agent Discussion</span>
+        <span className="text-[10px] text-[#888]">Research Lab — Automated Pipeline</span>
       </div>
 
       <div className="p-3 space-y-2.5" style={{ minHeight: "260px" }}>
-        {/* Agent messages */}
+        <div className="flex gap-2">
+          <div className="w-6 h-6 rounded-full bg-amber-950 flex items-center justify-center shrink-0">
+            <span className="text-[8px] text-amber-400 font-bold">S</span>
+          </div>
+          <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-2.5 text-[10px] flex-1">
+            <p className="text-[9px] text-amber-400 font-medium mb-1">Sage — Research Strategist</p>
+            <p className="text-[#bbb]">Found 14 relevant papers on ArXiv. The gap between flat rewards and curriculum-based shaping in multi-goal navigation is underexplored. Proposing hypothesis and 2 environments for testing.</p>
+          </div>
+        </div>
+
         <div className="flex gap-2">
           <div className="w-6 h-6 rounded-full bg-blue-950 flex items-center justify-center shrink-0">
-            <span className="text-[8px] text-blue-400 font-bold">PA</span>
+            <span className="text-[8px] text-blue-400 font-bold">A</span>
           </div>
           <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-2.5 text-[10px] flex-1">
-            <p className="text-[9px] text-blue-400 font-medium mb-1">Prof. Aria — Principal Investigator</p>
-            <p className="text-[#bbb]">I propose we investigate hierarchical reward shaping for multi-goal navigation. The gap between flat rewards and structured curricula remains underexplored.</p>
+            <p className="text-[9px] text-blue-400 font-medium mb-1">Atlas — RL Engineer</p>
+            <p className="text-[#bbb]">Building 2 environments for the study... <span className="text-green-400">CurriculumNav-v1</span> — 8/8 tests passed. Training PPO and SAC on both environments (50K timesteps each)...</p>
           </div>
         </div>
 
         <div className="flex gap-2">
-          <div className="w-6 h-6 rounded-full bg-green-950 flex items-center justify-center shrink-0">
-            <span className="text-[8px] text-green-400 font-bold">DM</span>
+          <div className="w-6 h-6 rounded-full bg-amber-950 flex items-center justify-center shrink-0">
+            <span className="text-[8px] text-amber-400 font-bold">S</span>
           </div>
           <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-2.5 text-[10px] flex-1">
-            <p className="text-[9px] text-green-400 font-medium mb-1">Dr. Marcus — ML Engineer</p>
-            <p className="text-[#bbb]">I can set up the experiment pipeline. We should test across 3 domains: grid-world, continuous control, and a custom robotics env. PPO with and without reward shaping as baseline.</p>
+            <p className="text-[9px] text-amber-400 font-medium mb-1">Sage — Analysis & Paper</p>
+            <p className="text-[#bbb]">PPO with curriculum shaping achieved 92% success vs 64% baseline. Paper draft complete: &ldquo;Hierarchical Reward Shaping for Multi-Goal Navigation&rdquo;</p>
           </div>
         </div>
 
-        <div className="flex gap-2">
-          <div className="w-6 h-6 rounded-full bg-purple-950 flex items-center justify-center shrink-0">
-            <span className="text-[8px] text-purple-400 font-bold">DE</span>
-          </div>
-          <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-2.5 text-[10px] flex-1">
-            <p className="text-[9px] text-purple-400 font-medium mb-1">Dr. Elena — Academic Writer</p>
-            <p className="text-[#bbb]">I found 12 relevant papers on ArXiv. The most cited approach uses potential-based shaping, but none combine it with hierarchical goals. This is a clear contribution angle.</p>
-          </div>
-        </div>
-
-        {/* Phase indicator */}
         <div className="flex items-center gap-2 pt-1">
-          <div className="flex-1 h-1 rounded-full bg-[#1a1a1a] overflow-hidden">
-            <div className="h-full bg-gradient-to-r from-blue-600 via-green-600 to-purple-600 rounded-full" style={{ width: "35%" }} />
-          </div>
-          <span className="text-[9px] text-[#555]">Phase 2/7 — Ideation</span>
+          {["Research","Design","Experiment","Analyze","Write","Review"].map((p, i) => (
+            <div key={p} className="flex items-center flex-1">
+              <div className={`h-1.5 flex-1 rounded-full ${i < 5 ? "bg-green-800" : i === 5 ? "bg-blue-600 animate-pulse" : "bg-[#1a1a1a]"}`} />
+              {i < 5 && <div className="w-0.5" />}
+            </div>
+          ))}
+          <span className="text-[9px] text-[#555] ml-1 shrink-0">6/6 — Review</span>
         </div>
       </div>
     </div>

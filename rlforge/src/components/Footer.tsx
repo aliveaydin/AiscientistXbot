@@ -5,25 +5,27 @@ import Link from "next/link";
 
 const columns = [
   {
-    title: "Platform",
+    title: "Product",
     links: [
-      { href: "/create", label: "Environment Builder" },
-      { href: "/environments", label: "Environments" },
-      { href: "/catalog", label: "Catalog" },
-    ],
-  },
-  {
-    title: "Research",
-    links: [
-      { href: "/research", label: "AI Research Lab" },
+      { href: "/environments", label: "Environment Generation" },
+      { href: "/research", label: "Research Lab" },
+      { href: "/catalog", label: "Template Catalog" },
       { href: "/blog", label: "Blog" },
     ],
   },
   {
     title: "Developers",
     links: [
-      { href: "/docs", label: "API Docs" },
-      { href: "/docs#sdk", label: "Python SDK" },
+      { href: "/docs", label: "Documentation" },
+      { href: "/docs#python-sdk", label: "Python SDK" },
+      { href: "/docs#api-reference", label: "API Reference" },
+    ],
+  },
+  {
+    title: "Company",
+    links: [
+      { href: "/sign-up", label: "Get Started" },
+      { href: "/sign-in", label: "Sign In" },
     ],
   },
 ];
@@ -39,7 +41,7 @@ export function Footer() {
           <div>
             <p className="font-bold text-white mb-2">kualia.ai</p>
             <p className="text-sm text-[#888] leading-relaxed">
-              The RL experiment platform. Design, train, and track.
+              Generate RL environments, train agents, run experiments, and create research papers — all in one platform.
             </p>
           </div>
           {columns.map((col) => (
