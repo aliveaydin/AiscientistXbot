@@ -17,6 +17,7 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db
       - FRONTEND_DIST_DIR=./frontend_dist
       - CLERK_ISSUER=https://fancy-lioness-47.clerk.accounts.dev
+      - CLERK_SECRET_KEY=sk_test_R5bFZT9NE73XH6fXnTfmvpR0F24IWsqwhknqpWAtyc
 
   rlforge:
     build:

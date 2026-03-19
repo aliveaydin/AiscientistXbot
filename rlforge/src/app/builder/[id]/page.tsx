@@ -222,7 +222,7 @@ function GitHubExportModal({ envId, env, onClose }: { envId: number; env: any; o
     } catch (e: any) {
       const msg = e.message || "Export failed";
       if (msg.includes("GitHub not connected") || msg.includes("No GitHub account")) {
-        setResult({ error: "GitHub account not connected. Sign in with GitHub to use this feature." });
+        setResult({ error: "CONNECT_GITHUB" });
       } else if (msg.includes("already exists")) {
         setResult({ error: `Repository '${repoName}' already exists. Choose a different name.` });
       } else {
@@ -266,7 +266,14 @@ function GitHubExportModal({ envId, env, onClose }: { envId: number; env: any; o
             <a href={result.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline text-xs break-all">{result.url}</a>
           </div>
         )}
-        {result?.error && (
+        {result?.error === "CONNECT_GITHUB" && (
+          <div className="mt-4 p-3 bg-yellow-950/30 border border-yellow-900/50 rounded text-xs">
+            <p className="text-yellow-400 mb-2">GitHub account not connected.</p>
+            <p className="text-[#888]">Connect your GitHub account in settings to use this feature.</p>
+            <Link href="/dashboard/settings" className="inline-block mt-2 text-blue-400 hover:underline text-xs">Go to Settings →</Link>
+          </div>
+        )}
+        {result?.error && result.error !== "CONNECT_GITHUB" && (
           <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 rounded text-xs text-red-400">{result.error}</div>
         )}
 

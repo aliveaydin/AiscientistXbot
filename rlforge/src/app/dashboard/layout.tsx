@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
-import { LayoutDashboard, Box, Cpu, FlaskConical, User } from "lucide-react";
+import { LayoutDashboard, Box, Cpu, FlaskConical, User, Settings } from "lucide-react";
 
 const sidebarLinks = [
   { href: "/dashboard", label: "Overview", icon: LayoutDashboard, exact: true },
   { href: "/dashboard/environments", label: "Environments", icon: Box },
   { href: "/dashboard/training", label: "Training", icon: Cpu },
   { href: "/dashboard/research", label: "Research", icon: FlaskConical },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
