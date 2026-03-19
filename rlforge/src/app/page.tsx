@@ -6,6 +6,7 @@ import {
   Send, CheckCircle, XCircle, Bot, Loader2,
   Download, RefreshCw, Eye, Target,
 } from "lucide-react";
+import { AuthRedirect } from "@/components/AuthRedirect";
 
 /* ── Static Data ───────────────────────────────── */
 
@@ -31,22 +32,22 @@ const capabilities = [
 export default function Home() {
   return (
     <div className="fade-in">
+      <AuthRedirect to="/dashboard" />
+
       {/* ── Hero ──────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 pt-28 pb-20">
-        <div className="flex items-center gap-2 mb-6">
-          <span className="text-[10px] px-3 py-1 border border-[#1a1a1a] rounded-full text-[#888] tracking-wide uppercase">
-            The RL Experiment Platform
-          </span>
-        </div>
+      <section className="min-h-[calc(100vh-4rem)] flex flex-col items-center justify-center px-6 text-center">
         <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-4xl">
-          Design, Train, and<br />
-          <span className="text-[#888]">Experiment with RL</span>
+          Design the Experience.<br />
+          <span className="text-[#888]">Train the Intelligence.</span>
         </h1>
-        <p className="text-lg text-[#666] mt-8 max-w-2xl leading-relaxed">
-          Go from an idea to a fully trained agent. Generate Gymnasium environments with AI,
-          iterate through chat, train agents, and track experiments with version-controlled reports.
+        <p className="text-xl md:text-2xl text-[#888] mt-6 max-w-2xl leading-relaxed">
+          Design, Train, and Experiment with RL
         </p>
-        <div className="flex flex-wrap gap-4 mt-10">
+        <p className="text-sm text-[#555] mt-4 max-w-xl leading-relaxed">
+          Generate Gymnasium environments with AI, iterate through chat,
+          train agents, and track experiments with version-controlled reports.
+        </p>
+        <div className="flex flex-wrap gap-4 mt-10 justify-center">
           <Link href="/create" className="px-7 py-3.5 bg-white text-black text-sm font-medium rounded-lg hover:bg-[#e5e5e5] transition-colors">
             Start Building
           </Link>
@@ -54,7 +55,7 @@ export default function Home() {
             Browse Environments
           </Link>
         </div>
-        <div className="flex flex-wrap gap-3 mt-12">
+        <div className="flex flex-wrap gap-3 mt-12 justify-center">
           {capabilities.map((c) => (
             <span key={c.label} className="flex items-center gap-1.5 text-[11px] text-[#555] px-3 py-1.5 border border-[#1a1a1a] rounded-full">
               {c.icon} {c.label}
