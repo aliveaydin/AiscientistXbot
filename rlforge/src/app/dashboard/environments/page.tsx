@@ -3,8 +3,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { Box, Plus, Loader2, ExternalLink, Eye, EyeOff } from "lucide-react";
+import { Box, Plus, Loader2, ExternalLink, Sparkles } from "lucide-react";
 import { getMyEnvironments } from "@/lib/api";
+import { CreateEnvForm } from "@/components/CreateEnvForm";
+import { CreateEnvModal } from "@/components/CreateEnvModal";
 
 const difficultyColor: Record<string, string> = {
   easy: "text-green-500 border-green-500/20",
@@ -19,6 +21,7 @@ export default function DashboardEnvironmentsPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
+  const [modalOpen, setModalOpen] = useState(false);
   const perPage = 20;
 
   const load = useCallback(async () => {
@@ -47,14 +50,18 @@ export default function DashboardEnvironmentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-white">My Environments</h1>
-          <p className="text-sm text-[#888] mt-1">{total} environment{total !== 1 ? "s" : ""} total</p>
+          <p className="text-sm text-[#888] mt-1">
+            {total} environment{total !== 1 ? "s" : ""} total
+          </p>
         </div>
-        <Link
-          href="/create"
-          className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
-        >
-          <Plus className="w-4 h-4" /> New
-        </Link>
+        {total > 0 && (
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
+          >
+            <Plus className="w-4 h-4" /> New
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -62,16 +69,18 @@ export default function DashboardEnvironmentsPage() {
           <Loader2 className="w-6 h-6 text-[#555] animate-spin" />
         </div>
       ) : envs.length === 0 ? (
-        <div className="border border-dashed border-[#1a1a1a] rounded-lg p-12 text-center">
-          <Box className="w-10 h-10 text-[#333] mx-auto mb-4" />
-          <p className="text-[#888] mb-2">No environments yet.</p>
-          <p className="text-sm text-[#666] mb-6">Create your first environment with the AI-powered builder.</p>
-          <Link
-            href="/create"
-            className="inline-flex items-center gap-2 bg-white text-black px-5 py-2.5 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Create Environment
-          </Link>
+        <div className="border border-[#1a1a1a] rounded-xl p-8">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-[#888]" />
+            <h2 className="text-lg font-semibold text-white">
+              Create Your First Environment
+            </h2>
+          </div>
+          <p className="text-sm text-[#888] mb-6">
+            Describe what you need and the AI builder will generate a
+            Gymnasium-compatible environment for you.
+          </p>
+          <CreateEnvForm />
         </div>
       ) : (
         <>
@@ -80,29 +89,47 @@ export default function DashboardEnvironmentsPage() {
               <thead>
                 <tr className="border-b border-[#1a1a1a] text-[#888] text-xs">
                   <th className="text-left px-4 py-3 font-medium">Name</th>
-                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Category</th>
-                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Difficulty</th>
+                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">
+                    Category
+                  </th>
+                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">
+                    Difficulty
+                  </th>
                   <th className="text-left px-4 py-3 font-medium">Status</th>
-                  <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Version</th>
+                  <th className="text-left px-4 py-3 font-medium hidden md:table-cell">
+                    Version
+                  </th>
                   <th className="text-right px-4 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#1a1a1a]">
                 {envs.map((env: any) => (
-                  <tr key={env.id} className="hover:bg-[#0a0a0a] transition-colors">
+                  <tr
+                    key={env.id}
+                    className="hover:bg-[#0a0a0a] transition-colors"
+                  >
                     <td className="px-4 py-3">
-                      <Link href={`/builder/${env.id}`} className="text-sm text-white hover:underline">
+                      <Link
+                        href={`/builder/${env.id}`}
+                        className="text-sm text-white hover:underline"
+                      >
                         {env.name}
                       </Link>
                       {env.description && (
-                        <p className="text-xs text-[#666] mt-0.5 truncate max-w-[200px]">{env.description}</p>
+                        <p className="text-xs text-[#666] mt-0.5 truncate max-w-[200px]">
+                          {env.description}
+                        </p>
                       )}
                     </td>
                     <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className="text-xs text-[#888] font-mono">{env.category || "—"}</span>
+                      <span className="text-xs text-[#888] font-mono">
+                        {env.category || "\u2014"}
+                      </span>
                     </td>
                     <td className="px-4 py-3 hidden sm:table-cell">
-                      <span className={`text-[10px] font-mono uppercase tracking-wider border rounded px-1.5 py-0.5 ${difficultyColor[env.difficulty] || "text-[#666] border-[#222]"}`}>
+                      <span
+                        className={`text-[10px] font-mono uppercase tracking-wider border rounded px-1.5 py-0.5 ${difficultyColor[env.difficulty] || "text-[#666] border-[#222]"}`}
+                      >
                         {env.difficulty}
                       </span>
                     </td>
@@ -110,7 +137,9 @@ export default function DashboardEnvironmentsPage() {
                       <StatusDot status={env.status} />
                     </td>
                     <td className="px-4 py-3 hidden md:table-cell">
-                      <span className="text-xs text-[#888]">v{env.version}</span>
+                      <span className="text-xs text-[#888]">
+                        v{env.version}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -128,7 +157,6 @@ export default function DashboardEnvironmentsPage() {
             </table>
           </div>
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-2 pt-2">
               <button
@@ -142,7 +170,9 @@ export default function DashboardEnvironmentsPage() {
                 {page + 1} / {totalPages}
               </span>
               <button
-                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                onClick={() =>
+                  setPage((p) => Math.min(totalPages - 1, p + 1))
+                }
                 disabled={page >= totalPages - 1}
                 className="text-xs text-[#888] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed px-3 py-1 border border-[#1a1a1a] rounded"
               >
@@ -152,6 +182,8 @@ export default function DashboardEnvironmentsPage() {
           )}
         </>
       )}
+
+      <CreateEnvModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }
@@ -168,7 +200,9 @@ function StatusDot({ status }: { status: string }) {
 
   return (
     <div className="flex items-center gap-2">
-      <div className={`w-1.5 h-1.5 rounded-full ${colors[status] || colors.draft}`} />
+      <div
+        className={`w-1.5 h-1.5 rounded-full ${colors[status] || colors.draft}`}
+      />
       <span className="text-xs text-[#888]">{status}</span>
     </div>
   );

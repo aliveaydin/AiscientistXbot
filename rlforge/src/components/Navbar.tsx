@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu, X, LogOut } from "lucide-react";
 import { useAuth, SignInButton, UserButton } from "@clerk/nextjs";
 
 const publicLinks = [
@@ -15,7 +15,7 @@ const publicLinks = [
 export function Navbar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
-  const { isSignedIn, isLoaded } = useAuth();
+  const { isSignedIn, isLoaded, signOut } = useAuth();
 
   const logoHref = isSignedIn ? "/dashboard" : "/";
   const navLinks = isSignedIn ? [] : publicLinks;
@@ -55,13 +55,21 @@ export function Navbar() {
             </SignInButton>
           )}
           {isLoaded && isSignedIn && (
-            <UserButton
-              appearance={{
-                elements: {
-                  avatarBox: "w-8 h-8",
-                },
-              }}
-            />
+            <>
+              <UserButton
+                appearance={{
+                  elements: {
+                    avatarBox: "w-8 h-8",
+                  },
+                }}
+              />
+              <button
+                onClick={() => signOut({ redirectUrl: "/" })}
+                className="flex items-center gap-1.5 text-sm text-[#888] hover:text-white transition-colors"
+              >
+                <LogOut size={14} /> Sign Out
+              </button>
+            </>
           )}
         </div>
 
@@ -97,13 +105,21 @@ export function Navbar() {
               </SignInButton>
             )}
             {isLoaded && isSignedIn && (
-              <UserButton
-                appearance={{
-                  elements: {
-                    avatarBox: "w-8 h-8",
-                  },
-                }}
-              />
+              <div className="flex items-center gap-4">
+                <UserButton
+                  appearance={{
+                    elements: {
+                      avatarBox: "w-8 h-8",
+                    },
+                  }}
+                />
+                <button
+                  onClick={() => signOut({ redirectUrl: "/" })}
+                  className="flex items-center gap-1.5 text-sm text-[#888] hover:text-white transition-colors"
+                >
+                  <LogOut size={14} /> Sign Out
+                </button>
+              </div>
             )}
           </div>
         </div>

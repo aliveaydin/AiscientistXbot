@@ -44,9 +44,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         baseTheme: dark,
         variables: {
           colorPrimary: "#ffffff",
-          colorBackground: "#0a0a0a",
-          colorInputBackground: "#111",
+          colorBackground: "#111111",
+          colorInputBackground: "#1a1a1a",
           colorInputText: "#f5f5f5",
+          colorText: "#f5f5f5",
+          colorTextSecondary: "#888888",
+          colorNeutral: "#888888",
         },
       }}
     >

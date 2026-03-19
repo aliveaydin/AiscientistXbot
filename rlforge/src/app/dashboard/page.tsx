@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { useUser, useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { Box, Cpu, FlaskConical, Plus, ArrowRight, Loader2 } from "lucide-react";
+import { Box, Cpu, FlaskConical, Plus, ArrowRight, Loader2, Sparkles } from "lucide-react";
 import { getMyEnvironments, getMyTraining, getMyResearch, syncUser } from "@/lib/api";
+import { CreateEnvForm } from "@/components/CreateEnvForm";
+import { CreateEnvModal } from "@/components/CreateEnvModal";
 
 interface Stats {
   envCount: number;
@@ -19,6 +21,7 @@ export default function DashboardPage() {
   const { getToken } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [modalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
     if (!isLoaded || !user) return;
@@ -28,7 +31,6 @@ export default function DashboardPage() {
         const token = await getToken();
         if (!token) return;
 
-        // Sync user data with backend on first dashboard visit
         await syncUser(token, {
           email: user.primaryEmailAddress?.emailAddress || "",
           display_name: user.fullName || user.firstName || "",
@@ -65,6 +67,12 @@ export default function DashboardPage() {
     );
   }
 
+  const isEmpty =
+    stats &&
+    stats.envCount === 0 &&
+    stats.trainingCount === 0 &&
+    stats.researchCount === 0;
+
   const cards = [
     { label: "Environments", count: stats?.envCount ?? 0, icon: Box, href: "/dashboard/environments", color: "text-blue-400" },
     { label: "Training Runs", count: stats?.trainingCount ?? 0, icon: Cpu, href: "/dashboard/training", color: "text-green-400" },
@@ -83,12 +91,14 @@ export default function DashboardPage() {
             Here&apos;s an overview of your work on kualia.ai
           </p>
         </div>
-        <Link
-          href="/create"
-          className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
-        >
-          <Plus className="w-4 h-4" /> New Environment
-        </Link>
+        {!isEmpty && (
+          <button
+            onClick={() => setModalOpen(true)}
+            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
+          >
+            <Plus className="w-4 h-4" /> New Environment
+          </button>
+        )}
       </div>
 
       {/* Stats cards */}
@@ -112,12 +122,34 @@ export default function DashboardPage() {
         })}
       </div>
 
+      {/* Empty state — inline builder prompt */}
+      {isEmpty && (
+        <div className="border border-[#1a1a1a] rounded-xl p-8">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-[#888]" />
+            <h2 className="text-lg font-semibold text-white">
+              Create Your First Environment
+            </h2>
+          </div>
+          <p className="text-sm text-[#888] mb-6">
+            Describe the RL environment you want in natural language and the AI
+            will generate it for you.
+          </p>
+          <CreateEnvForm />
+        </div>
+      )}
+
       {/* Recent environments */}
       {stats && stats.recentEnvs.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-white">Recent Environments</h2>
-            <Link href="/dashboard/environments" className="text-xs text-[#888] hover:text-white transition-colors">
+            <h2 className="text-base font-semibold text-white">
+              Recent Environments
+            </h2>
+            <Link
+              href="/dashboard/environments"
+              className="text-xs text-[#888] hover:text-white transition-colors"
+            >
               View all
             </Link>
           </div>
@@ -131,7 +163,8 @@ export default function DashboardPage() {
                 <div className="min-w-0">
                   <p className="text-sm text-white truncate">{env.name}</p>
                   <p className="text-xs text-[#666] mt-0.5">
-                    {env.category} &middot; {env.difficulty} &middot; v{env.version}
+                    {env.category} &middot; {env.difficulty} &middot; v
+                    {env.version}
                   </p>
                 </div>
                 <StatusBadge status={env.status} />
@@ -145,8 +178,13 @@ export default function DashboardPage() {
       {stats && stats.recentTraining.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-white">Recent Training Runs</h2>
-            <Link href="/dashboard/training" className="text-xs text-[#888] hover:text-white transition-colors">
+            <h2 className="text-base font-semibold text-white">
+              Recent Training Runs
+            </h2>
+            <Link
+              href="/dashboard/training"
+              className="text-xs text-[#888] hover:text-white transition-colors"
+            >
               View all
             </Link>
           </div>
@@ -170,22 +208,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Empty state */}
-      {stats && stats.envCount === 0 && stats.trainingCount === 0 && stats.researchCount === 0 && (
-        <div className="border border-[#1a1a1a] border-dashed rounded-lg p-12 text-center">
-          <Box className="w-10 h-10 text-[#333] mx-auto mb-4" />
-          <p className="text-[#888] mb-2">You haven&apos;t created anything yet.</p>
-          <p className="text-sm text-[#666] mb-6">
-            Start by generating your first RL environment with the AI builder.
-          </p>
-          <Link
-            href="/create"
-            className="inline-flex items-center gap-2 bg-white text-black px-5 py-2.5 rounded-md text-sm font-medium hover:bg-[#e0e0e0] transition-colors"
-          >
-            <Plus className="w-4 h-4" /> Create Environment
-          </Link>
-        </div>
-      )}
+      <CreateEnvModal open={modalOpen} onClose={() => setModalOpen(false)} />
     </div>
   );
 }
