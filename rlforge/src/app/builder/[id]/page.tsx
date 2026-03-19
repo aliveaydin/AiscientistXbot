@@ -1,10 +1,10 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import {
-  ArrowLeft, Send, Loader2, CheckCircle, XCircle,
+  Send, Loader2, CheckCircle, XCircle,
   Download, RotateCcw, ChevronDown, Play, Pause,
   Activity, Code2, Cpu, Eye, Zap,
   Target, Layers, Settings2, Bot,
@@ -91,11 +91,14 @@ export default function BuilderPage() {
     <div className="h-[calc(100vh-4rem)] flex flex-col">
       {/* Top bar */}
       <div className="border-b border-[#1a1a1a] px-6 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="text-[#555] hover:text-white"><ArrowLeft size={16} /></Link>
-          <span className="font-semibold">{env?.name || "Loading..."}</span>
-          <span className="text-xs text-[#555] font-mono">v{env?.version || 1}</span>
-          {env?.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888]">{env.domain}</span>}
+        <div className="flex items-center gap-1.5 text-xs min-w-0">
+          <Link href="/dashboard" className="text-[#555] hover:text-white transition-colors shrink-0">Dashboard</Link>
+          <span className="text-[#333] shrink-0">/</span>
+          <Link href="/dashboard/environments" className="text-[#555] hover:text-white transition-colors shrink-0">Environments</Link>
+          <span className="text-[#333] shrink-0">/</span>
+          <span className="text-white font-medium truncate">{env?.name || "Loading..."}</span>
+          <span className="text-[10px] text-[#555] font-mono shrink-0">v{env?.version || 1}</span>
+          {env?.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888] shrink-0">{env.domain}</span>}
         </div>
         <div className="flex items-center gap-2">
           <button onClick={handleExportZip} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors">
@@ -1047,10 +1050,111 @@ function SpaceCard({ title, icon, space, fallback, color }: { title: string; ico
   );
 }
 
+interface CodeAnnotation { line: number; label: string; desc: string; cls: string; bg: string }
+
+function analyzeCode(code: string): CodeAnnotation[] {
+  if (!code) return [];
+  const lines = code.split("\n");
+  const out: CodeAnnotation[] = [];
+  let inStep = false, hasReward = false, hasTerm = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (/^class\s+\w+/.test(t) && /(?:gym|gymnasium)\.Env/.test(t)) {
+      out.push({ line: i, label: "Environment Class", desc: "Main class inheriting from gymnasium.Env", cls: "text-purple-400", bg: "bg-purple-950/30" });
+    } else if (/^def\s+__init__\s*\(/.test(t)) {
+      out.push({ line: i, label: "Constructor", desc: "Defines spaces, parameters, and initial state", cls: "text-blue-400", bg: "bg-blue-950/30" });
+      inStep = false;
+    } else if (/self\.observation_space\s*=/.test(lines[i]) && !t.startsWith("#")) {
+      out.push({ line: i, label: "Observation Space", desc: "What the agent observes each step", cls: "text-cyan-400", bg: "bg-cyan-950/30" });
+    } else if (/self\.action_space\s*=/.test(lines[i]) && !t.startsWith("#")) {
+      out.push({ line: i, label: "Action Space", desc: "Available agent actions", cls: "text-violet-400", bg: "bg-violet-950/30" });
+    } else if (/^def\s+reset\s*\(/.test(t)) {
+      out.push({ line: i, label: "Reset", desc: "Returns environment to initial state", cls: "text-green-400", bg: "bg-green-950/30" });
+      inStep = false;
+    } else if (/^def\s+step\s*\(/.test(t)) {
+      out.push({ line: i, label: "Step", desc: "Executes action → next state, reward, termination", cls: "text-orange-400", bg: "bg-orange-950/30" });
+      inStep = true; hasReward = false; hasTerm = false;
+    } else if (inStep && !hasReward && /reward\s*[=+]/.test(lines[i]) && !t.startsWith("#") && !t.startsWith("def")) {
+      out.push({ line: i, label: "Reward", desc: "Reward signal computation", cls: "text-yellow-400", bg: "bg-yellow-950/30" });
+      hasReward = true;
+    } else if (inStep && !hasTerm && /terminated\s*=/.test(lines[i]) && !t.startsWith("#")) {
+      out.push({ line: i, label: "Termination", desc: "Conditions that end the episode", cls: "text-red-400", bg: "bg-red-950/30" });
+      hasTerm = true;
+    } else if (/^def\s+\w+\s*\(/.test(t) && !/^def\s+(step|reset|__init__)\b/.test(t)) {
+      inStep = false;
+    }
+  }
+  return out;
+}
+
+function pyHighlight(line: string): React.ReactNode {
+  if (!line) return " ";
+  const parts: React.ReactNode[] = [];
+  const re = /(#.*$|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\b\d+\.?\d*(?:e[+-]?\d+)?\b|\b[a-zA-Z_]\w*\b|[^\s\w"'#]+|\s+)/g;
+  let m, idx = 0;
+  while ((m = re.exec(line)) !== null) {
+    const t = m[0], k = `${idx++}`;
+    if (t.startsWith("#")) parts.push(<span key={k} className="text-[#555]">{t}</span>);
+    else if (t.startsWith('"') || t.startsWith("'")) parts.push(<span key={k} className="text-[#98c379]">{t}</span>);
+    else if (t === "self") parts.push(<span key={k} className="text-[#e06c75]">{t}</span>);
+    else if (/^(True|False|None)$/.test(t)) parts.push(<span key={k} className="text-[#d19a66]">{t}</span>);
+    else if (/^(def|class|return|if|elif|else|for|while|import|from|as|in|not|and|or|try|except|raise|with|yield|lambda|pass|break|continue|is|assert|finally)$/.test(t)) parts.push(<span key={k} className="text-[#c678dd]">{t}</span>);
+    else if (/^\d/.test(t)) parts.push(<span key={k} className="text-[#d19a66]">{t}</span>);
+    else parts.push(<span key={k}>{t}</span>);
+  }
+  return parts.length > 0 ? <>{parts}</> : <span>{line}</span>;
+}
+
 function CodeView({ env, versions, showVersions, setShowVersions, handleRollback }: { env: any; versions: any[]; showVersions: boolean; setShowVersions: (v: boolean) => void; handleRollback: (v: number) => void }) {
+  const code: string = env?.code || "";
+  const annotations = useMemo(() => analyzeCode(code), [code]);
+  const annoMap = useMemo(() => { const m = new Map<number, CodeAnnotation>(); annotations.forEach(a => m.set(a.line, a)); return m; }, [annotations]);
+  const codeRef = useRef<HTMLDivElement>(null);
+  const lines = code ? code.split("\n") : [];
+
+  function scrollTo(line: number) {
+    codeRef.current?.querySelector(`[data-ln="${line}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   return (
     <div className="space-y-4">
-      <pre className="code-block text-xs leading-relaxed whitespace-pre overflow-x-auto">{env?.code || "# No code yet"}</pre>
+      {/* Section navigator */}
+      {annotations.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {annotations.map((a, i) => (
+            <button key={i} onClick={() => scrollTo(a.line)} className={`text-[10px] px-2 py-0.5 rounded border border-[#1a1a1a] hover:border-[#333] transition-colors ${a.cls}`}>
+              {a.label} <span className="text-[#444] ml-0.5">L{a.line + 1}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Annotated code */}
+      <div ref={codeRef} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg overflow-auto max-h-[520px]">
+        <div className="p-3 font-mono text-[11px] leading-5">
+          {lines.length === 0 && <span className="text-[#555]"># No code yet</span>}
+          {lines.map((ln, i) => {
+            const a = annoMap.get(i);
+            return (
+              <div key={i}>
+                {a && (
+                  <div className="flex items-center gap-2 mt-3 mb-0.5 first:mt-0" data-ln={i}>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded font-sans font-medium ${a.bg} ${a.cls}`}>{a.label}</span>
+                    <span className="text-[9px] text-[#444] font-sans">{a.desc}</span>
+                  </div>
+                )}
+                <div className="flex hover:bg-[#111] rounded-sm">
+                  <span className="w-8 text-right text-[#333] select-none shrink-0 pr-3 font-sans text-[10px] leading-5">{i + 1}</span>
+                  <span className="text-[#bbb] whitespace-pre">{pyHighlight(ln)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Version history */}
       <div>
         <button onClick={() => setShowVersions(!showVersions)} className="flex items-center gap-1 text-xs text-[#555] hover:text-[#888]">
           <ChevronDown size={12} className={showVersions ? "rotate-180" : ""} /> Version History ({versions.length})
