@@ -194,6 +194,42 @@ async def unpublish_paper(project_id: int, db: AsyncSession = Depends(get_db)):
     return {"success": True}
 
 
+@router.post("/paper-from-env/{env_id}")
+async def paper_from_env(
+    env_id: int,
+    background_tasks: BackgroundTasks,
+    topic: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    auth_user: Optional[dict] = Depends(get_optional_user),
+):
+    user_id = await _resolve_user_id(db, auth_user)
+
+    from app.models import RLEnvironment
+    env_result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
+    env = env_result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    title = topic or f"Research: {env.name}"
+    project = ResearchProject(
+        title=title, description=f"Paper generated from environment: {env.name}",
+        topic=topic or env.description or env.name,
+        user_id=user_id, current_phase="analyze", status="active",
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    project_id = project.id
+
+    async def _run(pid: int, eid: int, t: Optional[str], uid: Optional[int]):
+        async with async_session() as bg_db:
+            await lab_service._paper_from_env_pipeline(bg_db, pid, eid, t, uid)
+
+    background_tasks.add_task(_run, project_id, env_id, topic, user_id)
+
+    return {"project_id": project_id, "title": title, "status": "started"}
+
+
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: int, db: AsyncSession = Depends(get_db)):
     deleted = await lab_service.delete_project(db, project_id)

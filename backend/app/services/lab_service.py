@@ -1020,6 +1020,100 @@ class LabService:
         )
         return result.scalars().first()
 
+    async def _paper_from_env_pipeline(self, db: AsyncSession, project_id: int, env_id: int,
+                                       topic: Optional[str] = None,
+                                       user_id: Optional[int] = None):
+        """Run analyze → write → review on an existing env, populating the pre-created project."""
+        result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            logger.error(f"[Lab] paper_from_env: project {project_id} not found")
+            return
+
+        env_result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
+        env = env_result.scalar_one_or_none()
+        if not env:
+            logger.error(f"[Lab] paper_from_env: env {env_id} not found")
+            return
+
+        env.research_project_id = project.id
+        await db.commit()
+
+        if topic:
+            try:
+                await self._search_and_import_topic_papers(db, project, min_papers=8)
+            except Exception as e:
+                logger.warning(f"[Lab] Paper references import failed: {e}")
+
+        runs_result = await db.execute(
+            select(TrainingRun).where(TrainingRun.env_id == env_id).order_by(TrainingRun.created_at)
+        )
+        runs = runs_result.scalars().all()
+
+        results_data = []
+        for run in runs:
+            res = json.loads(run.results_json) if run.results_json else {}
+            curve = json.loads(run.training_curve_json) if run.training_curve_json else []
+            results_data.append({
+                "run_id": run.id, "env_id": run.env_id, "env_name": env.name,
+                "algorithm": run.algorithm, "status": run.status,
+                "mean_reward": res.get("mean_reward"), "std_reward": res.get("std_reward"),
+                "success_rate": res.get("success_rate"),
+                "training_time_sec": res.get("training_time_sec"),
+                "total_timesteps": res.get("total_timesteps"),
+                "curve_length": len(curve),
+            })
+
+        env_summary = (
+            f"**{env.name}** (domain: {env.domain}, difficulty: {env.difficulty})\n"
+            f"- Observation Space: {env.observation_space}\n"
+            f"- Action Space: {env.action_space}\n"
+            f"- Reward: {env.reward_description}\n"
+        )
+        await self._save_message(db, project.id, "atlas", f"Using existing environment:\n{env_summary}", "design")
+        await self._save_work(db, project.id, "atlas", "environments", "Generated Environments", env_summary,
+                              metadata={"environments": [{"id": env.id, "name": env.name}]})
+
+        completed = [r for r in results_data if r["status"] == "completed"]
+        if completed:
+            summary = f"## Training Results\n\n**{len(completed)} completed** out of {len(results_data)} runs.\n\n"
+            for r in completed:
+                summary += f"### {r['env_name']} — {r['algorithm']}\n"
+                summary += f"- Mean Reward: **{r['mean_reward']}** (std: {r['std_reward']})\n"
+                summary += f"- Success Rate: **{r['success_rate']}**\n"
+                summary += f"- Training Time: {r['training_time_sec']}s | Timesteps: {r['total_timesteps']}\n\n"
+            await self._save_message(db, project.id, "atlas", summary, "experiment")
+            await self._save_work(db, project.id, "atlas", "training_results", "Training Results", summary,
+                                  metadata={"runs": results_data})
+        await db.commit()
+
+        for phase_name in ["analyze", "write", "review"]:
+            try:
+                result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
+                project = result.scalar_one_or_none()
+                if not project or project.status == "completed":
+                    break
+
+                runner = {"analyze": self._run_analyze, "write": self._run_write, "review": self._run_review}[phase_name]
+                await runner(db, project)
+
+                if project.status != "completed" and phase_name in PHASES:
+                    idx = PHASES.index(phase_name)
+                    if idx + 1 < len(PHASES):
+                        project.current_phase = PHASES[idx + 1]
+                    else:
+                        project.status = "completed"
+                project.updated_at = datetime.utcnow()
+                await db.commit()
+            except Exception as e:
+                logger.exception(f"[Lab] paper_from_env phase {phase_name} failed")
+                try:
+                    await self._save_message(db, project.id, "sage", f"Phase failed: {str(e)[:500]}", phase_name)
+                    await db.commit()
+                except Exception:
+                    pass
+                break
+
     async def delete_project(self, db: AsyncSession, project_id: int) -> bool:
         result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
         project = result.scalar_one_or_none()

@@ -40,7 +40,17 @@ def migrate():
         else:
             raise
 
-    # 3. Add user_id to research_projects
+    # 3. Add research_project_id to rl_environments
+    try:
+        cursor.execute("ALTER TABLE rl_environments ADD COLUMN research_project_id INTEGER REFERENCES research_projects(id)")
+        print("[OK] rl_environments.research_project_id added")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" in str(e).lower():
+            print("[SKIP] rl_environments.research_project_id already exists")
+        else:
+            raise
+
+    # 4. Add user_id to research_projects
     try:
         cursor.execute("ALTER TABLE research_projects ADD COLUMN user_id INTEGER REFERENCES users(id)")
         print("[OK] research_projects.user_id added")

@@ -279,6 +279,12 @@ export async function getLabPhases() {
   return fetchAPI(`/api/lab/phases`, { revalidate: 3600 });
 }
 
+export async function createPaperFromEnv(envId: number, topic: string, token: string) {
+  return authFetch(`/api/lab/paper-from-env/${envId}?topic=${encodeURIComponent(topic)}`, token, {
+    method: "POST",
+  });
+}
+
 export async function getPublicProfile(username: string) {
   return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
 }

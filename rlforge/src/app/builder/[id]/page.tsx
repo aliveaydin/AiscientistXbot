@@ -16,8 +16,9 @@ import {
   builderChat, builderRollback, exportZip,
   startTraining, getTrainingStatus, getTrainingCurve,
   getTrainingReplay, getTrainingHistory, getTrainingReport,
-  updateEnvName, githubExport,
+  updateEnvName, githubExport, createPaperFromEnv,
 } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
 interface Message { id: number; role: string; content: string; version_snapshot: number | null; created_at: string | null; }
 type RightTab = "dashboard" | "code" | "agent" | "history" | "docs";
@@ -67,6 +68,7 @@ export default function BuilderPage() {
   const [isRenaming, setIsRenaming] = useState(false);
   const [editName, setEditName] = useState("");
   const [ghModalOpen, setGhModalOpen] = useState(false);
+  const [paperModalOpen, setPaperModalOpen] = useState(false);
 
   async function handleRename() {
     const trimmed = editName.trim();
@@ -130,6 +132,9 @@ export default function BuilderPage() {
           {env?.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888] shrink-0">{env.domain}</span>}
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setPaperModalOpen(true)} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-amber-900/60 text-amber-400 rounded hover:border-amber-700 transition-colors" title="Generate a research paper from this environment">
+            <FileText size={12} /> Create Paper
+          </button>
           <button onClick={() => setGhModalOpen(true)} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors" title="Push to GitHub">
             <Github size={12} /> GitHub
           </button>
@@ -198,6 +203,8 @@ export default function BuilderPage() {
 
       {/* GitHub Export Modal */}
       {ghModalOpen && <GitHubExportModal envId={envId} env={env} onClose={() => setGhModalOpen(false)} />}
+      {/* Paper Generation Modal */}
+      {paperModalOpen && <PaperFromEnvModal envId={envId} env={env} onClose={() => setPaperModalOpen(false)} />}
     </div>
   );
 }
@@ -282,6 +289,92 @@ function GitHubExportModal({ envId, env, onClose }: { envId: number; env: any; o
           <button onClick={handlePush} disabled={pushing || !repoName.trim() || !!result?.url} className="px-4 py-2 text-xs bg-white text-black rounded font-medium hover:bg-[#ddd] transition-colors disabled:opacity-40">
             {pushing ? <><Loader2 size={12} className="animate-spin inline mr-1" /> Pushing...</> : "Push to GitHub"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Paper From Env Modal ────────────────────────
+
+function PaperFromEnvModal({ envId, env, onClose }: { envId: number; env: any; onClose: () => void }) {
+  const { getToken } = useAuth();
+  const router = useRouter();
+  const [topic, setTopic] = useState(env?.description?.slice(0, 200) || "");
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState<{ projectId?: number; error?: string } | null>(null);
+
+  async function handleGenerate() {
+    setGenerating(true); setResult(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const data = await createPaperFromEnv(envId, topic, token);
+      setResult({ projectId: data.project_id });
+    } catch (e: any) {
+      setResult({ error: e.message || "Failed to start paper generation" });
+    } finally { setGenerating(false); }
+  }
+
+  useEffect(() => { document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = ""; }; }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-black border border-[#1a1a1a] rounded-xl w-full max-w-lg mx-4 p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <FileText size={18} className="text-amber-400" />
+          <h2 className="text-lg font-bold">Create Research Paper</h2>
+        </div>
+        <p className="text-sm text-[#888] mb-2">
+          Generate a research paper from <span className="text-white font-medium">{env?.name}</span> and its training data.
+        </p>
+        <p className="text-xs text-[#555] mb-5">
+          The Research Lab will analyze your training results, search ArXiv for related work, and write a complete paper with methodology, results, and discussion.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] text-[#555] block mb-1">Research topic / question (optional)</label>
+            <textarea
+              value={topic}
+              onChange={e => setTopic(e.target.value)}
+              rows={3}
+              placeholder="e.g., 'Comparative analysis of PPO vs SAC in sparse reward environments'"
+              className="w-full bg-[#111] border border-[#1a1a1a] rounded px-3 py-2 text-sm text-white placeholder:text-[#444] outline-none focus:border-[#333] resize-none"
+            />
+          </div>
+        </div>
+
+        {result?.projectId && (
+          <div className="mt-4 p-3 bg-green-950/30 border border-green-900/50 rounded text-sm">
+            <p className="text-green-400 mb-2">Paper generation started!</p>
+            <p className="text-xs text-[#888] mb-3">Sage is analyzing your data and writing the paper. This takes a few minutes.</p>
+            <button
+              onClick={() => router.push(`/research/${result.projectId}`)}
+              className="text-xs bg-white text-black px-3 py-1.5 rounded font-medium hover:bg-[#ddd] transition-colors"
+            >
+              View in Research Lab &rarr;
+            </button>
+          </div>
+        )}
+        {result?.error && (
+          <div className="mt-4 p-3 bg-red-950/30 border border-red-900/50 rounded text-xs text-red-400">{result.error}</div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="px-4 py-2 text-xs text-[#888] hover:text-white border border-[#1a1a1a] rounded transition-colors">
+            {result?.projectId ? "Close" : "Cancel"}
+          </button>
+          {!result?.projectId && (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className="px-4 py-2 text-xs bg-amber-600 text-white rounded font-medium hover:bg-amber-700 transition-colors disabled:opacity-40"
+            >
+              {generating ? <><Loader2 size={12} className="animate-spin inline mr-1" /> Generating...</> : "Generate Paper"}
+            </button>
+          )}
         </div>
       </div>
     </div>
