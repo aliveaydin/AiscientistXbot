@@ -85,45 +85,64 @@ export default function ResearchProjectPage() {
   useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
+  const startPolling = useCallback((onStopCondition: (proj: any, prevPhase: string) => boolean, setFlag: (v: boolean) => void, capturedPhase: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const [proj, chat] = await Promise.all([
+          getLabProject(projectId),
+          getLabChatboard(projectId),
+        ]);
+        setProject(proj);
+        setMessages(chat);
+
+        if (proj.environment_count > 0) {
+          getLabEnvironments(projectId).then(setEnvironments).catch(() => {});
+        }
+        const phaseIdx = PHASES.indexOf(proj.current_phase);
+        if (phaseIdx >= 2 || proj.status === "completed") {
+          getLabTrainingRuns(projectId).then(setTrainingRuns).catch(() => {});
+        }
+        if (phaseIdx >= 4 || proj.status === "completed") {
+          getLabPaper(projectId).then(setPaper).catch(() => {});
+        }
+
+        if (onStopCondition(proj, capturedPhase)) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setFlag(false);
+        }
+      } catch { /* ignore */ }
+    }, 4000);
+  }, [projectId]);
+
   async function handleRunPhase() {
+    if (!project) return;
+    const capturedPhase = project.current_phase;
     setRunning(true);
     try {
       await runLabPhase(projectId);
-      await loadAll();
-    } catch { /* ignore */ }
-    finally { setRunning(false); }
+      startPolling(
+        (proj, prev) => proj.current_phase !== prev || proj.status === "completed" || proj.status === "failed",
+        setRunning,
+        capturedPhase,
+      );
+    } catch {
+      setRunning(false);
+    }
   }
 
   async function handleRunAll() {
+    if (!project) return;
+    const capturedPhase = project.current_phase;
     setRunningAll(true);
     try {
       await runLabAll(projectId);
-      pollRef.current = setInterval(async () => {
-        try {
-          const [proj, chat] = await Promise.all([
-            getLabProject(projectId),
-            getLabChatboard(projectId),
-          ]);
-          setProject(proj);
-          setMessages(chat);
-
-          if (proj.environment_count > 0) {
-            getLabEnvironments(projectId).then(setEnvironments).catch(() => {});
-          }
-          const phaseIdx = PHASES.indexOf(proj.current_phase);
-          if (phaseIdx >= 2 || proj.status === "completed") {
-            getLabTrainingRuns(projectId).then(setTrainingRuns).catch(() => {});
-          }
-          if (phaseIdx >= 4 || proj.status === "completed") {
-            getLabPaper(projectId).then(setPaper).catch(() => {});
-          }
-
-          if (proj.status === "completed" || proj.status === "failed") {
-            if (pollRef.current) clearInterval(pollRef.current);
-            setRunningAll(false);
-          }
-        } catch { /* ignore */ }
-      }, 5000);
+      startPolling(
+        (proj) => proj.status === "completed" || proj.status === "failed",
+        setRunningAll,
+        capturedPhase,
+      );
     } catch {
       setRunningAll(false);
     }
@@ -239,9 +258,9 @@ export default function ResearchProjectPage() {
           >
             {runningAll ? <><Loader2 size={14} className="animate-spin" /> Running All...</> : <><Play size={14} /> Run All Phases</>}
           </button>
-          {runningAll && (
+          {(running || runningAll) && (
             <span className="text-xs text-blue-400 animate-pulse ml-2">
-              Pipeline running — auto-refreshing every 5s
+              {runningAll ? "Pipeline running" : "Phase running"} — auto-refreshing...
             </span>
           )}
         </div>
@@ -273,7 +292,7 @@ export default function ResearchProjectPage() {
       </div>
 
       {/* Tab Content */}
-      {tab === "feed" && <FeedTab messages={messages} chatEnd={chatEnd} runningAll={runningAll} isActive={isActive} />}
+      {tab === "feed" && <FeedTab messages={messages} chatEnd={chatEnd} runningAll={running || runningAll} isActive={isActive} />}
       {tab === "environments" && <EnvironmentsTab environments={environments} />}
       {tab === "training" && <TrainingTab runs={trainingRuns} />}
       {tab === "paper" && <PaperTab paper={paper} />}

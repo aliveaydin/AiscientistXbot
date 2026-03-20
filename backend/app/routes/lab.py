@@ -87,11 +87,22 @@ async def get_project(project_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/projects/{project_id}/run-phase")
-async def run_next_phase(project_id: int, db: AsyncSession = Depends(get_db)):
-    result = await lab_service.run_next_phase(db, project_id)
-    if result.get("error"):
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
+async def run_next_phase(project_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.status == "completed":
+        raise HTTPException(status_code=400, detail="Project already completed")
+
+    current_phase = project.current_phase
+
+    async def _run(pid: int):
+        async with async_session() as bg_db:
+            await lab_service.run_next_phase(bg_db, pid)
+
+    background_tasks.add_task(_run, project_id)
+    return {"message": f"Phase '{current_phase}' started in background", "phase": current_phase, "project_id": project_id}
 
 
 @router.post("/projects/{project_id}/run-all")
