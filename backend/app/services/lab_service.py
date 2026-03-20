@@ -717,6 +717,76 @@ class LabService:
 
     # ── Phase 5: Write ───────────────────────────────────────────
 
+    async def _build_results_table(self, db: AsyncSession, project_id: int) -> str:
+        """Build a formatted results table from real training data."""
+        env_ids_result = await db.execute(
+            select(RLEnvironment.id, RLEnvironment.name).where(RLEnvironment.research_project_id == project_id)
+        )
+        env_map = {r[0]: r[1] for r in env_ids_result.fetchall()}
+        if not env_map:
+            return ""
+
+        runs_result = await db.execute(
+            select(TrainingRun).where(TrainingRun.env_id.in_(list(env_map.keys())), TrainingRun.status == "completed")
+            .order_by(TrainingRun.created_at)
+        )
+        runs = runs_result.scalars().all()
+        if not runs:
+            return ""
+
+        lines = ["| Environment | Algorithm | Mean Reward | Std Reward | Success Rate | Episodes | Training Time |",
+                 "|---|---|---|---|---|---|---|"]
+        for run in runs:
+            res = json.loads(run.results_json) if run.results_json else {}
+            env_name = env_map.get(run.env_id, f"Env {run.env_id}")
+            mr = res.get("mean_reward", "N/A")
+            sr = res.get("std_reward", "N/A")
+            success = res.get("success_rate")
+            success_str = f"{success*100:.1f}%" if success is not None else "N/A"
+            episodes = res.get("episodes_trained", "N/A")
+            time_s = res.get("training_time_sec", "N/A")
+            lines.append(f"| {env_name} | {run.algorithm} | {mr} | {sr} | {success_str} | {episodes} | {time_s}s |")
+
+        return "\n".join(lines)
+
+    async def _build_curve_descriptions(self, db: AsyncSession, project_id: int) -> str:
+        """Build textual descriptions of training curves for the paper."""
+        env_ids_result = await db.execute(
+            select(RLEnvironment.id, RLEnvironment.name).where(RLEnvironment.research_project_id == project_id)
+        )
+        env_map = {r[0]: r[1] for r in env_ids_result.fetchall()}
+        if not env_map:
+            return ""
+
+        runs_result = await db.execute(
+            select(TrainingRun).where(
+                TrainingRun.env_id.in_(list(env_map.keys())), TrainingRun.status == "completed"
+            ).order_by(TrainingRun.created_at)
+        )
+        runs = runs_result.scalars().all()
+        descs = []
+        for run in runs:
+            if not run.training_curve_json:
+                continue
+            curve = json.loads(run.training_curve_json)
+            if len(curve) < 2:
+                continue
+            rewards = [p.get("mean_reward", 0) for p in curve]
+            env_name = env_map.get(run.env_id, f"Env {run.env_id}")
+            q1 = rewards[:len(rewards)//4]
+            q4 = rewards[3*len(rewards)//4:]
+            early_avg = sum(q1)/max(len(q1), 1)
+            late_avg = sum(q4)/max(len(q4), 1)
+            peak = max(rewards)
+            improvement = late_avg - early_avg
+            descs.append(
+                f"**{env_name} + {run.algorithm}:** "
+                f"Initial reward ~{early_avg:.2f}, final reward ~{late_avg:.2f} "
+                f"(improvement: {improvement:+.2f}), peak: {peak:.2f}, "
+                f"{len(curve)} evaluation points over training."
+            )
+        return "\n".join(descs) if descs else "No curve data available."
+
     async def _run_write(self, db: AsyncSession, project: ResearchProject):
         logger.info(f"[Lab] WRITE phase for project {project.id}")
 
@@ -725,7 +795,7 @@ class LabService:
         )
         all_works = works_result.scalars().all()
         works_text = "\n\n---\n\n".join([
-            f"[{w.work_type}] {w.title}\n{w.content[:3000]}" for w in all_works
+            f"[{w.work_type}] {w.title}\n{w.content[:4000]}" for w in all_works
         ])
 
         envs_result = await db.execute(
@@ -742,37 +812,97 @@ class LabService:
             )
         env_ctx = "\n\n".join(env_descriptions) if env_descriptions else "No environment details."
 
-        paper_ctx = await self._get_project_paper_context(db, project)
+        results_table = await self._build_results_table(db, project.id)
+        curve_desc = await self._build_curve_descriptions(db, project.id)
+
+        refs_result = await db.execute(
+            select(Article).join(ProjectReference, ProjectReference.article_id == Article.id).where(
+                ProjectReference.project_id == project.id
+            ).order_by(Article.relevance_score.desc().nullslast()).limit(15)
+        )
+        ref_articles = refs_result.scalars().all()
+        refs_for_bib = []
+        for i, art in enumerate(ref_articles, 1):
+            arxiv_tag = f" arXiv:{art.arxiv_id}" if art.arxiv_id else ""
+            refs_for_bib.append(f"[{i}] {art.title}.{arxiv_tag}")
+        bib_text = "\n".join(refs_for_bib) if refs_for_bib else "No references available."
+        ref_summaries = []
+        for i, art in enumerate(ref_articles[:8], 1):
+            summary = art.summary or (art.content[:400] + "..." if art.content and len(art.content) > 400 else art.content or "")
+            ref_summaries.append(f"[{i}] {art.title}: {summary}")
+        ref_ctx = "\n\n".join(ref_summaries)
 
         prompt = (
-            f"Write a complete research paper based on ALL the work done in this study.\n\n"
+            f"Write a COMPLETE, DETAILED research paper in formal academic style, suitable for submission "
+            f"to a top ML venue (NeurIPS, ICML, ICLR). This paper is based on REAL experiments with actual "
+            f"training data from RL environments we built and tested.\n\n"
             f"**Research Topic:** {project.topic or project.title}\n\n"
-            f"**All Research Work (literature, experiments, analysis):**\n{works_text}\n\n"
-            f"**Generated RL Environments (real, tested, functional):**\n{env_ctx}\n\n"
-            f"**Reference Papers from ArXiv:**\n{paper_ctx[:3000]}\n\n"
-            f"Write the complete paper with:\n"
-            f"1. **Title** (descriptive, academic)\n"
-            f"2. **Abstract** (150-250 words)\n"
-            f"3. **1. Introduction** (motivation, problem, contributions)\n"
-            f"4. **2. Related Work** (cite reference papers by title)\n"
-            f"5. **3. Methodology** (environment design rationale, algorithm selection)\n"
-            f"6. **4. Experimental Setup** (concrete environments, algorithms, hyperparameters, metrics)\n"
-            f"7. **5. Results** (present real training data, compare algorithms)\n"
-            f"8. **6. Discussion** (implications, limitations, future work)\n"
-            f"9. **7. Conclusion**\n"
-            f"10. **References**\n\n"
-            f"This paper is based on REAL experiments with actual training data from generated environments. "
-            f"Reference specific environments, algorithms, and metrics. Use markdown formatting."
+            f"**All Research Work:**\n{works_text}\n\n"
+            f"**Environment Specifications:**\n{env_ctx}\n\n"
+            f"**Experimental Results Table:**\n{results_table}\n\n"
+            f"**Training Curve Analysis:**\n{curve_desc}\n\n"
+            f"**Reference Papers (use [N] citation format):**\n{ref_ctx}\n\n"
+            f"**Bibliography entries:**\n{bib_text}\n\n"
+            f"PAPER STRUCTURE (write ALL sections in full, each section should be substantial):\n\n"
+            f"# [Paper Title]\n\n"
+            f"## Abstract\n"
+            f"Write 200-300 words. State the problem, approach, key results with numbers, and conclusion.\n\n"
+            f"## 1. Introduction\n"
+            f"Motivation, problem statement, contributions (as a bulleted list), paper organization. "
+            f"Cite relevant references using [N] format. Minimum 400 words.\n\n"
+            f"## 2. Related Work\n"
+            f"Discuss at least 5 reference papers by [N] citation. Compare and contrast with our approach. "
+            f"Minimum 300 words.\n\n"
+            f"## 3. Methodology\n"
+            f"### 3.1 Environment Design\n"
+            f"Describe each environment in detail: state space, action space, transition dynamics, reward function. "
+            f"Include the mathematical formulation where relevant.\n"
+            f"### 3.2 Algorithm Selection\n"
+            f"Justify why specific algorithms were chosen. Describe key hyperparameters.\n\n"
+            f"## 4. Experimental Setup\n"
+            f"Hardware/software, training configuration, evaluation protocol, metrics definition. "
+            f"Reproducibility details.\n\n"
+            f"## 5. Results\n"
+            f"### 5.1 Quantitative Results\n"
+            f"Present the EXACT results table from our experiments:\n{results_table}\n\n"
+            f"Discuss each result. Which algorithm performed best and why?\n"
+            f"### 5.2 Learning Dynamics\n"
+            f"Describe the training curves: {curve_desc}\n"
+            f"Discuss convergence speed, stability, and any interesting patterns.\n\n"
+            f"## 6. Discussion\n"
+            f"Key findings, implications, comparison with prior work, limitations, threats to validity.\n\n"
+            f"## 7. Conclusion\n"
+            f"Summary of contributions, main takeaways, future work directions.\n\n"
+            f"## References\n"
+            f"List ALL references in [N] format.\n\n"
+            f"CRITICAL INSTRUCTIONS:\n"
+            f"- Write the COMPLETE paper, do NOT truncate or summarize any section.\n"
+            f"- Use formal academic English throughout.\n"
+            f"- Include the EXACT numbers from our experimental results.\n"
+            f"- Use [N] citation format and cite at least 5 references.\n"
+            f"- Every section must be substantive (not just a few sentences).\n"
+            f"- The paper should be 3000-5000 words total.\n"
+            f"- Use markdown formatting with # for sections."
         )
 
         paper_content = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
+
+        if len(paper_content) < 2000:
+            continuation_prompt = (
+                f"The paper draft is incomplete. Continue writing from where you left off. "
+                f"Here is the current content:\n\n{paper_content}\n\n"
+                f"Continue the paper from the last section. Write all remaining sections in full."
+            )
+            continuation = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], continuation_prompt)
+            paper_content = paper_content + "\n\n" + continuation
+
         await self._save_message(db, project.id, "sage", "Paper draft complete.", "write")
 
         lines = paper_content.split("\n")
         title = project.title
-        for line in lines[:5]:
+        for line in lines[:10]:
             clean = line.replace("#", "").strip()
-            if clean and len(clean) > 10:
+            if clean and len(clean) > 10 and not clean.lower().startswith("abstract"):
                 title = clean
                 break
 
@@ -780,15 +910,15 @@ class LabService:
         lower = paper_content.lower()
         if "abstract" in lower:
             idx = lower.index("abstract")
-            chunk = paper_content[idx:idx+2000]
+            chunk = paper_content[idx:idx+3000]
             abs_lines = []
             started = False
             for line in chunk.split("\n"):
-                if "abstract" in line.lower():
+                if "abstract" in line.lower() and not started:
                     started = True
                     continue
                 if started:
-                    if line.startswith("#") or line.startswith("**1."):
+                    if line.startswith("## ") or line.startswith("# 1") or line.startswith("**1."):
                         break
                     abs_lines.append(line)
             abstract = "\n".join(abs_lines).strip()
@@ -869,6 +999,8 @@ class LabService:
             return {"error": "Project not found"}
         if project.status == "completed":
             return {"error": "Project already completed"}
+        if getattr(project, "phase_running", False):
+            return {"error": "A phase is already running"}
 
         phase = project.current_phase
         logger.info(f"[Lab] Running phase: {phase} for project {project.id}")
@@ -887,10 +1019,17 @@ class LabService:
             return {"error": f"Unknown phase: {phase}"}
 
         try:
+            project.phase_running = True
+            await db.commit()
+        except Exception:
+            pass
+
+        try:
             await runner(db, project)
         except Exception as e:
             logger.exception(f"[Lab] Phase {phase} failed for project {project.id}")
             try:
+                project.phase_running = False
                 await self._save_message(db, project.id, "sage", f"Phase failed: {str(e)[:500]}", phase)
                 await db.commit()
             except Exception:
@@ -904,6 +1043,7 @@ class LabService:
             else:
                 project.status = "completed"
 
+        project.phase_running = False
         project.updated_at = datetime.utcnow()
         await db.commit()
 
@@ -941,6 +1081,7 @@ class LabService:
             "id": project.id, "title": project.title,
             "description": project.description, "topic": project.topic,
             "status": project.status, "current_phase": project.current_phase,
+            "phase_running": getattr(project, "phase_running", False) or False,
             "selected_idea": project.selected_idea,
             "revision_count": project.revision_count,
             "created_at": project.created_at, "updated_at": project.updated_at,

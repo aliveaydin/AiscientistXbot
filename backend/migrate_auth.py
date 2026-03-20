@@ -60,6 +60,16 @@ def migrate():
         else:
             raise
 
+    # 5. Add phase_running to research_projects
+    try:
+        cursor.execute("ALTER TABLE research_projects ADD COLUMN phase_running BOOLEAN DEFAULT 0")
+        print("[OK] research_projects.phase_running added")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" in str(e).lower():
+            print("[SKIP] research_projects.phase_running already exists")
+        else:
+            raise
+
     conn.commit()
     conn.close()
     print("\n[DONE] Auth migration complete!")

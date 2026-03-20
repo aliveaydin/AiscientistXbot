@@ -135,6 +135,7 @@ class ResearchProject(Base):
     topic = Column(Text, nullable=True)
     status = Column(String(50), default="active")  # active, completed, paused, failed
     current_phase = Column(String(50), default="research")
+    phase_running = Column(Boolean, default=False)
     selected_idea = Column(Text, nullable=True)
     revision_count = Column(Integer, default=0)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)

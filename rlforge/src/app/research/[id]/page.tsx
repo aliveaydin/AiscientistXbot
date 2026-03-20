@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Play, Loader2, CheckCircle, BookOpen,
   FlaskConical, Cpu, BarChart3, FileText, ChevronRight,
-  ExternalLink, Beaker, Brain, Wrench,
+  ExternalLink, Beaker, Brain, Wrench, Download,
 } from "lucide-react";
 import {
   getLabProject, getLabChatboard, getLabEnvironments,
@@ -107,7 +107,8 @@ export default function ResearchProjectPage() {
           getLabPaper(projectId).then(setPaper).catch(() => {});
         }
 
-        if (onStopCondition(proj, capturedPhase)) {
+        const shouldStop = onStopCondition(proj, capturedPhase) || (!proj.phase_running && proj.current_phase !== capturedPhase);
+        if (shouldStop) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
           setFlag(false);
@@ -151,6 +152,7 @@ export default function ResearchProjectPage() {
   const currentPhaseIdx = project ? PHASES.indexOf(project.current_phase) : -1;
   const isCompleted = project?.status === "completed";
   const isActive = project?.status === "active";
+  const phaseRunning = project?.phase_running || running || runningAll;
 
   const completedPhases = useMemo(() => {
     if (!project) return new Set<string>();
@@ -246,14 +248,14 @@ export default function ResearchProjectPage() {
         <div className="flex items-center gap-3 mb-6">
           <button
             onClick={handleRunPhase}
-            disabled={running || runningAll}
+            disabled={phaseRunning}
             className="flex items-center gap-2 px-4 py-2 text-sm bg-white text-black rounded-lg font-medium hover:bg-[#ddd] disabled:opacity-40 transition-colors"
           >
-            {running ? <><Loader2 size={14} className="animate-spin" /> Running...</> : <><ChevronRight size={14} /> Run Next Phase</>}
+            {phaseRunning && !runningAll ? <><Loader2 size={14} className="animate-spin" /> Running...</> : <><ChevronRight size={14} /> Run Next Phase</>}
           </button>
           <button
             onClick={handleRunAll}
-            disabled={running || runningAll}
+            disabled={phaseRunning}
             className="flex items-center gap-2 px-4 py-2 text-sm border border-[#222] rounded-lg text-[#888] hover:text-white hover:border-[#444] disabled:opacity-40 transition-colors"
           >
             {runningAll ? <><Loader2 size={14} className="animate-spin" /> Running All...</> : <><Play size={14} /> Run All Phases</>}
@@ -295,7 +297,7 @@ export default function ResearchProjectPage() {
       {tab === "feed" && <FeedTab messages={messages} chatEnd={chatEnd} runningAll={running || runningAll} isActive={isActive} />}
       {tab === "environments" && <EnvironmentsTab environments={environments} />}
       {tab === "training" && <TrainingTab runs={trainingRuns} />}
-      {tab === "paper" && <PaperTab paper={paper} />}
+      {tab === "paper" && <PaperTab paper={paper} projectId={projectId} />}
       {tab === "references" && <ReferencesTab references={references} />}
     </div>
   );
@@ -556,7 +558,7 @@ function MiniRewardChart({ curve }: { curve: any[] }) {
 
 /* ─── Paper Tab ──────────────────────────────────────────────── */
 
-function PaperTab({ paper }: { paper: any }) {
+function PaperTab({ paper, projectId }: { paper: any; projectId: number }) {
   if (!paper) {
     return (
       <div className="border border-dashed border-[#1a1a1a] rounded-xl p-12 text-center">
@@ -567,30 +569,143 @@ function PaperTab({ paper }: { paper: any }) {
     );
   }
 
+  const API = process.env.NEXT_PUBLIC_API_URL || "";
+
   return (
     <div className="border border-[#1a1a1a] rounded-xl bg-[#0a0a0a]">
       <div className="p-6 border-b border-[#1a1a1a]">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
             <h2 className="text-lg font-bold">{paper.title}</h2>
             <p className="text-xs text-[#555] mt-1">
               Status: <span className={paper.status === "final" ? "text-green-400" : "text-yellow-400"}>{paper.status}</span>
               {" "}| Version {paper.version}
             </p>
           </div>
+          <a
+            href={`${API}/api/lab/projects/${projectId}/paper/download`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2 text-sm bg-white text-black rounded-lg font-medium hover:bg-[#ddd] transition-colors shrink-0"
+          >
+            <Download size={14} /> Download PDF
+          </a>
         </div>
         {paper.abstract && (
           <div className="mt-4 p-4 bg-[#111] rounded-lg border border-[#1a1a1a]">
             <p className="text-[10px] text-[#555] uppercase tracking-wider mb-2">Abstract</p>
-            <p className="text-sm text-[#ccc] leading-relaxed">{paper.abstract}</p>
+            <p className="text-sm text-[#ccc] leading-relaxed italic">{paper.abstract}</p>
           </div>
         )}
       </div>
-      <div className="p-6 prose prose-invert prose-sm max-w-none">
-        <div className="text-sm text-[#ccc] leading-relaxed whitespace-pre-wrap break-words">
-          {paper.content}
-        </div>
-      </div>
+      <PaperContent content={paper.content} />
+    </div>
+  );
+}
+
+function PaperContent({ content }: { content: string }) {
+  if (!content) return null;
+
+  const sections = content.split(/(?=^#{1,3}\s)/m);
+
+  return (
+    <div className="p-6 space-y-4">
+      {sections.map((section, i) => {
+        const lines = section.split("\n");
+        const firstLine = lines[0] || "";
+        const isH1 = firstLine.startsWith("# ") && !firstLine.startsWith("## ");
+        const isH2 = firstLine.startsWith("## ") && !firstLine.startsWith("### ");
+        const isH3 = firstLine.startsWith("### ");
+
+        const heading = firstLine.replace(/^#{1,3}\s*/, "").trim();
+        const body = lines.slice(1).join("\n").trim();
+
+        return (
+          <div key={i}>
+            {isH1 && heading && <h2 className="text-xl font-bold mt-6 mb-3">{heading}</h2>}
+            {isH2 && heading && <h3 className="text-lg font-semibold mt-5 mb-2 text-[#ccc] border-b border-[#1a1a1a] pb-2">{heading}</h3>}
+            {isH3 && heading && <h4 className="text-base font-medium mt-4 mb-1.5 text-[#bbb]">{heading}</h4>}
+            {!isH1 && !isH2 && !isH3 && firstLine && (
+              <div className="text-sm text-[#ccc] leading-relaxed whitespace-pre-wrap">{firstLine}</div>
+            )}
+            {body && <PaperBody text={body} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PaperBody({ text }: { text: string }) {
+  const parts = text.split(/(```[\s\S]*?```|\|.*\|[\s\S]*?\n(?:\|.*\|\n)*)/);
+
+  return (
+    <div className="space-y-2">
+      {parts.map((part, i) => {
+        if (part.startsWith("```")) {
+          const code = part.replace(/^```\w*\n?/, "").replace(/```$/, "").trim();
+          return (
+            <pre key={i} className="bg-[#111] border border-[#1a1a1a] rounded-lg p-3 text-xs text-[#ccc] overflow-x-auto font-mono">
+              {code}
+            </pre>
+          );
+        }
+        if (part.includes("|") && part.trim().startsWith("|")) {
+          return <MarkdownTable key={i} text={part} />;
+        }
+        if (!part.trim()) return null;
+        return (
+          <div key={i} className="text-sm text-[#ccc] leading-relaxed whitespace-pre-wrap">
+            {part.split("\n").map((line, j) => {
+              if (line.startsWith("- ") || line.startsWith("* ")) {
+                return <div key={j} className="ml-4 before:content-['•'] before:mr-2 before:text-[#555]">{line.slice(2)}</div>;
+              }
+              if (/^\d+\.\s/.test(line)) {
+                return <div key={j} className="ml-4">{line}</div>;
+              }
+              if (line.startsWith("> ")) {
+                return <blockquote key={j} className="border-l-2 border-[#333] pl-3 italic text-[#999]">{line.slice(2)}</blockquote>;
+              }
+              return <span key={j}>{line}{"\n"}</span>;
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MarkdownTable({ text }: { text: string }) {
+  const rows = text.trim().split("\n").filter(r => r.trim().startsWith("|"));
+  if (rows.length < 2) return <div className="text-sm text-[#ccc] whitespace-pre-wrap">{text}</div>;
+
+  const parseRow = (row: string) =>
+    row.split("|").slice(1, -1).map(c => c.trim());
+
+  const headers = parseRow(rows[0]);
+  const isSeparator = (row: string) => /^\|[\s-:|]+\|$/.test(row.trim());
+  const dataRows = rows.filter((r, i) => i > 0 && !isSeparator(r)).map(parseRow);
+
+  return (
+    <div className="overflow-x-auto my-3">
+      <table className="w-full text-xs border border-[#1a1a1a]">
+        <thead>
+          <tr className="bg-[#111]">
+            {headers.map((h, i) => (
+              <th key={i} className="border border-[#1a1a1a] px-3 py-2 text-left text-[#888] font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {dataRows.map((row, i) => (
+            <tr key={i} className="border-b border-[#1a1a1a] hover:bg-[#111]/50">
+              {row.map((cell, j) => (
+                <td key={j} className="border border-[#1a1a1a] px-3 py-2 text-[#ccc]">{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
