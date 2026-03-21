@@ -207,22 +207,22 @@ class AIService:
     def _is_kimi_model(self, model: str) -> bool:
         return "kimi" in model.lower()
 
-    async def _call_openai(self, system_prompt: str, user_prompt: str, model: str = "gpt-4") -> str:
+    async def _call_openai(self, system_prompt: str, user_prompt: str, model: str = "gpt-4", max_tokens: int = 500) -> str:
         response = await self.openai_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=500,
+            max_tokens=max_tokens,
             temperature=0.8,
         )
         return response.choices[0].message.content.strip()
 
-    async def _call_claude(self, system_prompt: str, user_prompt: str, model: str = "claude-sonnet-4-20250514") -> str:
+    async def _call_claude(self, system_prompt: str, user_prompt: str, model: str = "claude-sonnet-4-20250514", max_tokens: int = 500) -> str:
         response = await self.anthropic_client.messages.create(
             model=model,
-            max_tokens=500,
+            max_tokens=max_tokens,
             system=system_prompt,
             messages=[
                 {"role": "user", "content": user_prompt},

@@ -6,12 +6,12 @@ import Link from "next/link";
 import {
   ArrowLeft, Play, Loader2, CheckCircle, BookOpen,
   FlaskConical, Cpu, BarChart3, FileText, ChevronRight,
-  ExternalLink, Beaker, Brain, Wrench, Download,
+  ExternalLink, Beaker, Brain, Wrench, Download, Trash2,
 } from "lucide-react";
 import {
   getLabProject, getLabChatboard, getLabEnvironments,
   getLabTrainingRuns, getLabPaper, getLabReferences,
-  runLabPhase, runLabAll,
+  runLabPhase, runLabAll, deleteLabEnvironment,
 } from "@/lib/api";
 
 const PHASES = ["research", "design", "experiment", "analyze", "write", "review"];
@@ -295,7 +295,12 @@ export default function ResearchProjectPage() {
 
       {/* Tab Content */}
       {tab === "feed" && <FeedTab messages={messages} chatEnd={chatEnd} runningAll={running || runningAll} isActive={isActive} />}
-      {tab === "environments" && <EnvironmentsTab environments={environments} />}
+      {tab === "environments" && <EnvironmentsTab environments={environments} projectId={projectId} onDelete={async (envId) => {
+        try {
+          await deleteLabEnvironment(projectId, envId);
+          setEnvironments(prev => prev.filter(e => e.id !== envId));
+        } catch {}
+      }} />}
       {tab === "training" && <TrainingTab runs={trainingRuns} />}
       {tab === "paper" && <PaperTab paper={paper} projectId={projectId} />}
       {tab === "references" && <ReferencesTab references={references} />}
@@ -352,7 +357,9 @@ function FeedTab({ messages, chatEnd, runningAll, isActive }: {
 
 /* ─── Environments Tab ───────────────────────────────────────── */
 
-function EnvironmentsTab({ environments }: { environments: any[] }) {
+function EnvironmentsTab({ environments, projectId, onDelete }: { environments: any[]; projectId: number; onDelete: (envId: number) => Promise<void> }) {
+  const [deleting, setDeleting] = useState<number | null>(null);
+
   if (!environments.length) {
     return (
       <div className="border border-dashed border-[#1a1a1a] rounded-xl p-12 text-center">
@@ -370,20 +377,35 @@ function EnvironmentsTab({ environments }: { environments: any[] }) {
         const passed = tests?.passed ?? 0;
         const total = tests?.total ?? 0;
         const allPassed = passed === total && total > 0;
+        const isFailed = passed < total * 0.75;
         return (
-          <div key={env.id} className="border border-[#1a1a1a] rounded-xl p-5 bg-[#0a0a0a] hover:border-[#333] transition-colors">
+          <div key={env.id} className={`border rounded-xl p-5 bg-[#0a0a0a] transition-colors ${
+            isFailed ? "border-red-900/40" : "border-[#1a1a1a] hover:border-[#333]"
+          }`}>
             <div className="flex items-start justify-between mb-3">
-              <div>
-                <h3 className="font-semibold text-sm">{env.name}</h3>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-semibold text-sm truncate">{env.name}</h3>
                 <p className="text-[11px] text-[#555] mt-0.5">
                   {env.domain} &middot; {env.difficulty}
                 </p>
               </div>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
-                allPassed ? "border-green-800 text-green-400" : "border-yellow-800 text-yellow-400"
-              }`}>
-                {passed}/{total} tests
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  allPassed ? "border-green-800 text-green-400" :
+                  isFailed ? "border-red-800 text-red-400" :
+                  "border-yellow-800 text-yellow-400"
+                }`}>
+                  {passed}/{total} tests
+                </span>
+                <button
+                  onClick={async () => { setDeleting(env.id); await onDelete(env.id); setDeleting(null); }}
+                  disabled={deleting === env.id}
+                  className="p-1 text-[#555] hover:text-red-400 transition-colors"
+                  title="Delete environment"
+                >
+                  {deleting === env.id ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                </button>
+              </div>
             </div>
             {env.description && (
               <p className="text-xs text-[#888] mb-3 line-clamp-2">{env.description}</p>
@@ -392,12 +414,15 @@ function EnvironmentsTab({ environments }: { environments: any[] }) {
               {env.observation_space && <span className="px-2 py-0.5 bg-[#111] rounded border border-[#1a1a1a]">obs: {env.observation_space.substring(0, 40)}</span>}
               {env.action_space && <span className="px-2 py-0.5 bg-[#111] rounded border border-[#1a1a1a]">act: {env.action_space.substring(0, 40)}</span>}
             </div>
-            <Link
-              href={`/builder/${env.id}`}
-              className="flex items-center gap-1 text-xs text-[#555] hover:text-white transition-colors"
-            >
-              Open in Builder <ExternalLink size={10} />
-            </Link>
+            <div className="flex items-center justify-between">
+              <Link
+                href={`/builder/${env.id}`}
+                className="flex items-center gap-1 text-xs text-[#555] hover:text-white transition-colors"
+              >
+                Open in Builder <ExternalLink size={10} />
+              </Link>
+              {isFailed && <span className="text-[9px] text-red-400">Tests failing — will be skipped in training</span>}
+            </div>
           </div>
         );
       })}
@@ -569,8 +594,6 @@ function PaperTab({ paper, projectId }: { paper: any; projectId: number }) {
     );
   }
 
-  const API = process.env.NEXT_PUBLIC_API_URL || "";
-
   return (
     <div className="border border-[#1a1a1a] rounded-xl bg-[#0a0a0a]">
       <div className="p-6 border-b border-[#1a1a1a]">
@@ -583,7 +606,7 @@ function PaperTab({ paper, projectId }: { paper: any; projectId: number }) {
             </p>
           </div>
           <a
-            href={`${API}/api/lab/projects/${projectId}/paper/download`}
+            href={`/api/lab/projects/${projectId}/paper/download`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-2 px-4 py-2 text-sm bg-white text-black rounded-lg font-medium hover:bg-[#ddd] transition-colors shrink-0"

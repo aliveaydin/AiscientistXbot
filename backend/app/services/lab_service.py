@@ -68,21 +68,25 @@ AGENTS = {
 class LabService:
     # ── LLM Calls ────────────────────────────────────────────────
 
-    async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str) -> str:
+    async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str, max_tokens: int = 16000) -> str:
         from app.services.ai_service import ai_service
         agent = AGENTS[agent_key]
         pref = agent["model_preference"]
         if pref == "kimi":
             try:
-                return await ai_service._call_kimi(system_prompt, user_prompt)
+                return await ai_service._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens)
             except Exception:
                 pass
         elif pref == "sonnet":
             try:
-                return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514")
+                return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514", max_tokens=max_tokens)
             except Exception:
                 pass
-        return await ai_service._call_ai(system_prompt, user_prompt)
+        try:
+            return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514", max_tokens=max_tokens)
+        except Exception:
+            pass
+        return await ai_service._call_openai(system_prompt, user_prompt, max_tokens=max_tokens)
 
     # ── Data Helpers ─────────────────────────────────────────────
 
@@ -460,13 +464,17 @@ class LabService:
                     else:
                         break
 
-                slug_base = self._slugify(gen.get("name", env_name))
+                final_name = env_name if env_name and env_name != "custom-env" else gen.get("name", env_name)
+                if final_name in ("custom-env", "CustomEnv", "custom_env") or not final_name:
+                    final_name = f"{project.topic or project.title} - Env {i+1}"
+
+                slug_base = self._slugify(final_name)
                 existing_slug = await db.execute(select(RLEnvironment).where(RLEnvironment.slug == slug_base))
                 if existing_slug.scalar_one_or_none():
                     slug_base = f"{slug_base}-{int(datetime.utcnow().timestamp())}"
 
                 env = RLEnvironment(
-                    name=gen.get("name", env_name),
+                    name=final_name,
                     slug=slug_base,
                     description=gen.get("description", env_desc),
                     category=env_domain, domain=env_domain,
@@ -530,10 +538,30 @@ class LabService:
         result = await db.execute(
             select(RLEnvironment).where(RLEnvironment.research_project_id == project.id)
         )
-        environments = result.scalars().all()
+        all_environments = result.scalars().all()
+
+        environments = []
+        skipped = []
+        for env in all_environments:
+            if env.test_results_json:
+                try:
+                    tr = json.loads(env.test_results_json)
+                    if tr.get("passed", 0) < tr.get("total", 8) * 0.75:
+                        skipped.append(env.name)
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            environments.append(env)
+
+        if skipped:
+            await self._save_message(
+                db, project.id, "atlas",
+                f"Skipping {len(skipped)} environment(s) with insufficient test coverage: {', '.join(skipped)}",
+                "experiment"
+            )
 
         if not environments:
-            await self._save_message(db, project.id, "atlas", "No environments available. Skipping training.", "experiment")
+            await self._save_message(db, project.id, "atlas", "No valid environments available. Skipping training.", "experiment")
             await db.commit()
             return
 
@@ -876,13 +904,13 @@ class LabService:
             f"## References\n"
             f"List ALL references in [N] format.\n\n"
             f"CRITICAL INSTRUCTIONS:\n"
-            f"- Write the COMPLETE paper, do NOT truncate or summarize any section.\n"
+            f"- Write the COMPLETE paper. Do NOT truncate, abbreviate, or summarize any section.\n"
             f"- Use formal academic English throughout.\n"
             f"- Include the EXACT numbers from our experimental results.\n"
             f"- Use [N] citation format and cite at least 5 references.\n"
-            f"- Every section must be substantive (not just a few sentences).\n"
-            f"- The paper should be 3000-5000 words total.\n"
-            f"- Use markdown formatting with # for sections."
+            f"- Every section must be substantive — multiple paragraphs, not just a few sentences.\n"
+            f"- Do NOT impose any word limit on yourself. Write as much as needed for a thorough paper.\n"
+            f"- Use markdown formatting with ## for sections and ### for subsections."
         )
 
         paper_content = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)

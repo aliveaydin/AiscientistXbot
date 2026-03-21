@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 import json
 from app.database import get_db, async_session
-from app.models import ResearchProject, ProjectReference, AgentMessage, AgentWork, ResearchPaper, Article, RLEnvironment, TrainingRun
+from app.models import ResearchProject, ProjectReference, AgentMessage, AgentWork, ResearchPaper, Article, RLEnvironment, TrainingRun, EnvVersion
 from app.schemas import (
     ResearchProjectCreate, ResearchProjectResponse,
     AgentMessageResponse, AgentWorkResponse, ResearchPaperResponse,
@@ -150,6 +150,23 @@ async def get_project_references(project_id: int, db: AsyncSession = Depends(get
 @router.get("/projects/{project_id}/environments")
 async def get_project_environments(project_id: int, db: AsyncSession = Depends(get_db)):
     return await lab_service.get_project_environments(db, project_id)
+
+
+@router.delete("/projects/{project_id}/environments/{env_id}")
+async def delete_project_environment(project_id: int, env_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(RLEnvironment).where(RLEnvironment.id == env_id, RLEnvironment.research_project_id == project_id)
+    )
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found in this project")
+    await db.execute(select(TrainingRun).where(TrainingRun.env_id == env_id))
+    from sqlalchemy import delete as sql_delete
+    await db.execute(sql_delete(TrainingRun).where(TrainingRun.env_id == env_id))
+    await db.execute(sql_delete(EnvVersion).where(EnvVersion.env_id == env_id))
+    await db.delete(env)
+    await db.commit()
+    return {"message": "Environment deleted"}
 
 
 @router.get("/projects/{project_id}/training-runs")

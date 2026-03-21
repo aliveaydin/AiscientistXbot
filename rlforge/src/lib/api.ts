@@ -259,6 +259,10 @@ export async function getLabEnvironments(projectId: number) {
   return fetchAPI(`/api/lab/projects/${projectId}/environments`, { revalidate: 10 });
 }
 
+export async function deleteLabEnvironment(projectId: number, envId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/environments/${envId}`, { method: "DELETE" });
+}
+
 export async function getLabTrainingRuns(projectId: number) {
   return fetchAPI(`/api/lab/projects/${projectId}/training-runs`, { revalidate: 5 });
 }
