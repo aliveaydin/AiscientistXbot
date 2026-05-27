@@ -113,11 +113,16 @@ class TrainingService:
 
         config["continue_from_path"] = continue_from_path
 
+        seed_value = config.get("seed")
+        variant_role = config.get("variant_role")
+
         training_run = TrainingRun(
             env_id=env_id,
             algorithm=algorithm,
             status="running",
             config_json=json.dumps(config),
+            seed=int(seed_value) if seed_value is not None else None,
+            variant_role=variant_role,
             started_at=datetime.utcnow(),
         )
         db.add(training_run)
@@ -272,12 +277,36 @@ class TrainingService:
         n_eval_episodes = config.get("n_eval_episodes", 5)
         eval_freq = max(total_timesteps // 20, 100)
         continue_from_path = config.get("continue_from_path")
+        batch_size = config.get("batch_size")
+        gamma = config.get("gamma")
+        net_arch = config.get("net_arch")
+        seed = config.get("seed")
 
-        lr_arg = f", learning_rate={learning_rate}" if learning_rate else ""
+        extra_args = ""
+        if learning_rate:
+            extra_args += f", learning_rate={learning_rate}"
+        if batch_size:
+            extra_args += f", batch_size={int(batch_size)}"
+        if gamma:
+            extra_args += f", gamma={float(gamma)}"
+        if seed is not None:
+            extra_args += f", seed={int(seed)}"
+
+        net_arch_map = {
+            "small": [64, 64],
+            "medium": [256, 256],
+            "large": [512, 256, 128],
+        }
+        policy_kwargs_arg = ""
+        if net_arch and net_arch in net_arch_map:
+            policy_kwargs_arg = f", policy_kwargs=dict(net_arch={net_arch_map[net_arch]})"
+
+        lr_arg = ""  # kept for backward compat but absorbed into extra_args
 
         env_code_escaped = json.dumps(env_code)
         output_dir_escaped = json.dumps(output_dir)
         continue_path_escaped = json.dumps(continue_from_path) if continue_from_path else "None"
+        seed_repr = "None" if seed is None else str(int(seed))
 
         script = f'''#!/usr/bin/env python3
 """Auto-generated SB3 training script with rich metrics."""
@@ -297,8 +326,12 @@ def write_json(path, data):
 
 try:
     import gymnasium as gym
-    from stable_baselines3 import PPO, DQN, SAC
+    from stable_baselines3 import PPO, DQN, SAC, A2C, TD3
     from stable_baselines3.common.callbacks import BaseCallback
+    try:
+        from sb3_contrib import QRDQN  # optional dependency
+    except Exception:
+        QRDQN = None
 
     env_code = {env_code_escaped}
     env_module_dir = tempfile.mkdtemp(prefix="rlforge_env_")
@@ -396,11 +429,13 @@ try:
     env = env_class()
 
     algorithm = "{algorithm}"
-    algo_map = {{"PPO": PPO, "DQN": DQN, "SAC": SAC}}
+    algo_map = {{"PPO": PPO, "DQN": DQN, "SAC": SAC, "A2C": A2C, "TD3": TD3}}
+    if QRDQN is not None:
+        algo_map["QRDQN"] = QRDQN
     CONTINUE_FROM = {continue_path_escaped}
 
     if algorithm not in algo_map:
-        write_json(RESULTS_PATH, {{"status": "failed", "error": f"Unknown algorithm: {{algorithm}}"}})
+        write_json(RESULTS_PATH, {{"status": "failed", "error": f"Unknown algorithm: {{algorithm}} (available: {{list(algo_map.keys())}})"}})
         sys.exit(1)
 
     AlgoClass = algo_map[algorithm]
@@ -408,12 +443,12 @@ try:
         try:
             model = AlgoClass.load(CONTINUE_FROM, env=env)
         except Exception:
-            model = AlgoClass("MlpPolicy", env, verbose=0{lr_arg})
+            model = AlgoClass("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
     else:
         try:
-            model = AlgoClass("MlpPolicy", env, verbose=0{lr_arg})
+            model = AlgoClass("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
         except Exception:
-            model = PPO("MlpPolicy", env, verbose=0{lr_arg})
+            model = PPO("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
             algorithm = "PPO"
 
     callback = RichCallback(eval_freq={eval_freq})
@@ -510,7 +545,7 @@ try:
         "hyperparameters": hyperparams,
         "sb3_version": sb3_version,
         "gymnasium_version": gym.__version__,
-        "random_seed": None,
+        "random_seed": {seed_repr},
     }})
 
     env.close()
@@ -594,6 +629,40 @@ except Exception as e:
                 "Training run %d finished: status=%s, exit_code=%d",
                 run_id, status, exit_code or 0,
             )
+
+            # Email notification on training completion
+            if status == "completed":
+                try:
+                    from app.services.email_service import email_service
+                    async with async_session() as _db:
+                        run_obj = (await _db.execute(
+                            select(TrainingRun).where(TrainingRun.id == run_id)
+                        )).scalar_one_or_none()
+                        if run_obj and run_obj.env_id:
+                            from app.models import RLEnvironment, User
+                            env_obj = (await _db.execute(
+                                select(RLEnvironment).where(RLEnvironment.id == run_obj.env_id)
+                            )).scalar_one_or_none()
+                            user_obj = None
+                            if env_obj and env_obj.user_id:
+                                user_obj = (await _db.execute(
+                                    select(User).where(User.id == env_obj.user_id)
+                                )).scalar_one_or_none()
+                            if user_obj and user_obj.email and user_obj.email_notifications:
+                                mean_reward = results.get("mean_reward") or results.get("final_reward", "N/A")
+                                await email_service.send_transactional(
+                                    to=user_obj.email, template="training_complete",
+                                    data={
+                                        "env_name": env_obj.name or "Environment",
+                                        "env_id": env_obj.id,
+                                        "algorithm": results.get("algorithm", "PPO"),
+                                        "timesteps": results.get("total_timesteps", "?"),
+                                        "mean_reward": mean_reward,
+                                    },
+                                    user_id=user_obj.id,
+                                )
+                except Exception as email_err:
+                    logger.warning("Failed to send training complete email: %s", email_err)
 
             # Cleanup temp files but keep model and results
             for fname in ["train_script.py"]:

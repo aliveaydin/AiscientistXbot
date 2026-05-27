@@ -21,7 +21,44 @@ async function fetchAPI(path: string, options: FetchOptions = {}) {
   const res = await fetch(url, fetchOpts);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text}`);
+    let parsed: Record<string, unknown> | null = null;
+    try { parsed = JSON.parse(text); } catch { /* ignore */ }
+    const detail = parsed?.detail;
+
+    if (detail && typeof detail === "object") {
+      const d = detail as Record<string, unknown>;
+      const errorCode = d.error as string;
+
+      if (res.status === 402 && errorCode === "insufficient_credits") {
+        const err = new Error(d.message as string || "Insufficient credits. Please add more credits to continue.") as Error & { code: string; balance: number; required: number };
+        err.code = "INSUFFICIENT_CREDITS";
+        err.balance = (d.balance as number) || 0;
+        err.required = (d.required as number) || 0;
+        throw err;
+      }
+
+      if (res.status === 403 && (errorCode === "plan_limit_reached" || errorCode === "plan_limit_exceeded")) {
+        const limit = (d.limit as number) || (d.max_steps as number) || 0;
+        const current = (d.current as number) || (d.requested as number) || 0;
+        const message = d.message as string ||
+          `You've reached the limit for your current plan (${current}/${limit}). Upgrade your plan to continue.`;
+        const err = new Error(message) as Error & { code: string; limit: number; current: number };
+        err.code = "PLAN_LIMIT_REACHED";
+        err.limit = limit;
+        err.current = current;
+        throw err;
+      }
+
+      if (d.message) {
+        throw new Error(d.message as string);
+      }
+    }
+
+    if (typeof detail === "string") {
+      throw new Error(detail);
+    }
+
+    throw new Error(`Something went wrong (${res.status}). Please try again.`);
   }
   return res.json();
 }
@@ -107,13 +144,41 @@ export async function getResearchProject(id: number) {
   return fetchAPI(`/api/rlforge/research/projects/${id}`);
 }
 
-export async function createResearchProject(title: string, description?: string, topic?: string, token?: string | null) {
+export type EnvVariant = {
+  label: string;
+  role: "treatment" | "baseline" | "control";
+  modifier?: string;
+};
+
+export type ExperimentConfig = {
+  env_variants: EnvVariant[];
+  algorithms: string[];        // PPO, SAC, DQN, A2C, TD3, QRDQN
+  n_seeds: number;
+  timesteps: number;
+  n_eval_episodes: number;
+  hyperparams?: {
+    learning_rate?: number | null;
+    batch_size?: number | null;
+    gamma?: number | null;
+    net_arch?: "small" | "medium" | "large" | null;
+  };
+};
+
+export async function createResearchProject(
+  title: string,
+  description?: string,
+  topic?: string,
+  token?: string | null,
+  experimentConfig?: ExperimentConfig | null,
+) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  const body: Record<string, unknown> = { title, description, topic };
+  if (experimentConfig) body.experiment_config = experimentConfig;
   return fetchAPI("/api/rlforge/research/projects", {
     method: "POST",
     headers,
-    body: JSON.stringify({ title, description, topic }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -149,6 +214,10 @@ export async function getEnvVersions(envId: number) {
 
 export async function getTrainingReport(envId: number, runId: number) {
   return fetchAPI(`/api/rlforge/train/${envId}/report/${runId}`, { revalidate: 30 });
+}
+
+export async function getBuilderSuggestions(envId: number) {
+  return fetchAPI(`/api/rlforge/builder/${envId}/suggestions`, { revalidate: 0 });
 }
 
 // --- Public API (blog, environments, papers, stats) ---
@@ -259,8 +328,28 @@ export async function getLabEnvironments(projectId: number) {
   return fetchAPI(`/api/lab/projects/${projectId}/environments`, { revalidate: 10 });
 }
 
+export async function replayLabPhase(projectId: number, phase: string) {
+  return fetchAPI(`/api/lab/projects/${projectId}/replay-phase`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phase }),
+  });
+}
+
 export async function deleteLabEnvironment(projectId: number, envId: number) {
   return fetchAPI(`/api/lab/projects/${projectId}/environments/${envId}`, { method: "DELETE" });
+}
+
+export async function deleteEnvironment(envId: number) {
+  return fetchAPI(`/api/rlforge/${envId}`, { method: "DELETE" });
+}
+
+export async function addLabReferences(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}/add-references`, { method: "POST" });
+}
+
+export async function deleteLabProject(projectId: number) {
+  return fetchAPI(`/api/lab/projects/${projectId}`, { method: "DELETE" });
 }
 
 export async function getLabTrainingRuns(projectId: number) {
@@ -291,4 +380,43 @@ export async function createPaperFromEnv(envId: number, topic: string, token: st
 
 export async function getPublicProfile(username: string) {
   return fetchAPI(`/api/users/${username}`, { revalidate: 120 });
+}
+
+export async function getSubscription(token: string) {
+  return authFetch("/api/users/me/subscription", token, { revalidate: 0 });
+}
+
+export async function getCreditHistory(token: string, limit = 50, offset = 0) {
+  return authFetch(`/api/users/me/credit-history?limit=${limit}&offset=${offset}`, token);
+}
+
+export async function getAvailablePlans() {
+  return fetchAPI("/api/users/plans", { revalidate: 300 });
+}
+
+export async function submitFeedback(token: string, data: { type: string; title: string; body: string; page_url?: string }) {
+  return authFetch("/api/feedback/submit", token, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getMyFeedback(token: string) {
+  return authFetch("/api/feedback/mine", token);
+}
+
+export async function getEmailPreferences(token: string) {
+  return authFetch("/api/email/preferences", token);
+}
+
+export async function updateEmailPreferences(
+  token: string,
+  prefs: { email_notifications?: boolean; marketing_emails?: boolean }
+) {
+  return authFetch("/api/email/preferences", token, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(prefs),
+  });
 }

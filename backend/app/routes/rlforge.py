@@ -4,9 +4,10 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, or_
+from app.rate_limit import limiter
 
 from app.database import get_db
 from app.models import (
@@ -19,6 +20,7 @@ from app.services.sandbox_runner import sandbox_runner
 from app.services.training_service import training_service
 from app.services.session_manager import session_manager
 from app.services.paper_parser import paper_parser
+from app.services.credit_service import credit_service, UsageAccumulator, CreditService
 
 logger = logging.getLogger("rlforge_api")
 
@@ -143,7 +145,9 @@ async def list_templates(db: AsyncSession = Depends(get_db)):
 # ──────────────────────────────────────────────────
 
 @router.post("/generate")
+@limiter.limit("5/minute")
 async def generate_env(
+    request: Request,
     data: dict,
     db: AsyncSession = Depends(get_db),
     auth_user: Optional[dict] = Depends(get_optional_user),
@@ -154,10 +158,34 @@ async def generate_env(
     if not description:
         raise HTTPException(400, "description is required")
 
+    user_id = await _resolve_user_id(db, auth_user)
+
+    # Credit & plan check for authenticated users
+    if user_id:
+        est = credit_service.estimate_operation_cost("env_generation")
+        check = await credit_service.check_credits(user_id, est, db)
+        if not check["ok"]:
+            raise HTTPException(402, detail={
+                "error": "insufficient_credits",
+                "balance": check["balance"],
+                "required": check["required"],
+                "message": f"Not enough credits. You need ~${est:.2f} but have ${check['balance']:.2f}.",
+            })
+        plan_check = await credit_service.check_plan_limit(user_id, "environments", db)
+        if not plan_check["ok"]:
+            raise HTTPException(403, detail={
+                "error": "plan_limit_reached",
+                "limit": plan_check.get("limit"),
+                "current": plan_check.get("current"),
+                "message": "Environment limit reached for your plan. Please upgrade.",
+            })
+
+    usage_acc = UsageAccumulator()
+
     log_lines = []
     log_lines.append(f"[start] Generating env: {description[:100]}...")
 
-    gen = await architect_service.generate_env_code(description, domain=domain, difficulty=difficulty)
+    gen = await architect_service.generate_env_code(description, domain=domain, difficulty=difficulty, usage_acc=usage_acc)
     code = gen.get("code", "")
     spec_json = json.dumps(gen.get("env_spec", {}))
     log_lines.append(f"[code] Generated {len(code)} chars of code")
@@ -165,12 +193,12 @@ async def generate_env(
     test_results = await sandbox_runner.run_all_tests(code)
     log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed")
 
-    max_fix_attempts = 2 if test_results["passed"] < 6 else 1
+    max_fix_attempts = 3 if test_results["passed"] < 6 else 2
     attempts = 0
     while test_results["failed"] > 0 and attempts < max_fix_attempts:
         attempts += 1
         log_lines.append(f"[fix] Attempt {attempts}: fixing {test_results['failed']} failed tests")
-        fixed_code = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results))
+        fixed_code = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results), usage_acc=usage_acc)
         if fixed_code and fixed_code != code:
             code = fixed_code
             test_results = await sandbox_runner.run_all_tests(code)
@@ -185,8 +213,6 @@ async def generate_env(
     existing = await db.execute(select(RLEnvironment).where(RLEnvironment.slug == slug_base))
     if existing.scalar_one_or_none():
         slug_base = f"{slug_base}-{int(datetime.utcnow().timestamp())}"
-
-    user_id = await _resolve_user_id(db, auth_user)
 
     env = RLEnvironment(
         name=gen.get("name", description[:100]),
@@ -222,12 +248,42 @@ async def generate_env(
     db.add(version)
     await db.commit()
 
+    # Deduct credits based on actual LLM usage
+    billed = usage_acc.billed_cost()
+    if user_id and billed > 0:
+        await credit_service.consume_credits(
+            user_id, billed, "env_generation", db,
+            resource_id=env.id, details=usage_acc.to_dict(),
+        )
+
+    # Email notification: env ready
+    if user_id:
+        try:
+            from app.services.email_service import email_service
+            user_obj = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+            if user_obj and user_obj.email and user_obj.email_notifications:
+                await email_service.send_transactional(
+                    to=user_obj.email, template="env_ready",
+                    data={
+                        "env_name": env.name,
+                        "env_id": env.id,
+                        "tests_passed": test_results.get("passed", 0),
+                        "tests_total": test_results.get("total", 8),
+                        "domain": env.domain or "general",
+                        "difficulty": env.difficulty or "medium",
+                    },
+                    user_id=user_id,
+                )
+        except Exception:
+            pass
+
     return {
         "id": env.id,
         "slug": env.slug,
         "name": env.name,
         "test_results": test_results,
         "generation_log": "\n".join(log_lines),
+        "credits_used": round(billed, 4),
     }
 
 
@@ -312,7 +368,8 @@ async def fork_env(
 # ──────────────────────────────────────────────────
 
 @router.post("/builder/{env_id}/chat")
-async def builder_chat(env_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+@limiter.limit("20/minute")
+async def builder_chat(request: Request, env_id: int, data: dict, db: AsyncSession = Depends(get_db), auth_user: Optional[dict] = Depends(get_optional_user)):
     result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
     env = result.scalar_one_or_none()
     if not env:
@@ -321,6 +378,18 @@ async def builder_chat(env_id: int, data: dict, db: AsyncSession = Depends(get_d
     message = data.get("message", "").strip()
     if not message:
         raise HTTPException(400, "message is required")
+
+    user_id = await _resolve_user_id(db, auth_user)
+    if user_id:
+        est = credit_service.estimate_operation_cost("builder_chat")
+        check = await credit_service.check_credits(user_id, est, db)
+        if not check["ok"]:
+            raise HTTPException(402, detail={
+                "error": "insufficient_credits",
+                "balance": check["balance"],
+                "required": check["required"],
+                "message": f"Not enough credits for this operation.",
+            })
 
     user_msg = BuilderConversation(
         env_id=env_id, role="user", content=message, version_snapshot=env.version
@@ -403,11 +472,13 @@ async def builder_chat(env_id: int, data: dict, db: AsyncSession = Depends(get_d
     except Exception as e:
         logger.warning("Failed to gather project context for chat: %s", e)
 
+    chat_usage = UsageAccumulator()
     iterated = await architect_service.iterate_env(
         env.code or "",
         env.env_spec_json or "{}",
         message,
         project_context=project_context,
+        usage_acc=chat_usage,
     )
 
     mode = iterated.get("mode", "change")
@@ -475,6 +546,13 @@ async def builder_chat(env_id: int, data: dict, db: AsyncSession = Depends(get_d
     db.add(ver)
     await db.commit()
 
+    billed = chat_usage.billed_cost()
+    if user_id and billed > 0:
+        await credit_service.consume_credits(
+            user_id, billed, "builder_chat", db,
+            resource_id=env_id, details=chat_usage.to_dict(),
+        )
+
     return {
         "mode": "change",
         "version": env.version,
@@ -482,6 +560,7 @@ async def builder_chat(env_id: int, data: dict, db: AsyncSession = Depends(get_d
         "breaking_changes": breaking,
         "test_results": test_results,
         "code": new_code,
+        "credits_used": round(billed, 4),
     }
 
 
@@ -628,11 +707,85 @@ async def list_versions(env_id: int, db: AsyncSession = Depends(get_db)):
 # ──────────────────────────────────────────────────
 
 @router.post("/train/{env_id}")
-async def start_training(env_id: int, data: dict = None, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def start_training(request: Request, env_id: int, data: dict = None, db: AsyncSession = Depends(get_db), auth_user: Optional[dict] = Depends(get_optional_user)):
     data = data or {}
 
     result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
     env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(404, "Environment not found")
+
+    user_id = await _resolve_user_id(db, auth_user)
+    total_timesteps = data.get("total_timesteps", 10000)
+
+    if user_id:
+        training_cost = CreditService.calculate_training_cost(total_timesteps)
+        check = await credit_service.check_credits(user_id, training_cost, db)
+        if not check["ok"]:
+            raise HTTPException(402, detail={
+                "error": "insufficient_credits",
+                "balance": check["balance"],
+                "required": check["required"],
+                "message": f"Training {total_timesteps:,} steps costs ${training_cost:.2f}. You have ${check['balance']:.2f}.",
+            })
+        plan_check = await credit_service.check_plan_limit(user_id, "training_steps", db)
+        if total_timesteps > plan_check.get("max_steps", 50000):
+            raise HTTPException(403, detail={
+                "error": "plan_limit_exceeded",
+                "max_steps": plan_check.get("max_steps"),
+                "requested": total_timesteps,
+                "message": f"Your plan allows max {plan_check.get('max_steps'):,} steps per run.",
+            })
+
+    is_curriculum = data.get("curriculum", False)
+    if is_curriculum:
+        last_run_result = await db.execute(
+            select(TrainingRun).where(
+                TrainingRun.env_id == env_id, TrainingRun.status == "completed"
+            ).order_by(desc(TrainingRun.created_at)).limit(1)
+        )
+        last_run = last_run_result.scalar_one_or_none()
+        results_summary = ""
+        if last_run and last_run.results_json:
+            r = json.loads(last_run.results_json)
+            results_summary = (
+                f"Last training: {last_run.algorithm}, mean_reward={r.get('mean_reward')}, "
+                f"success_rate={r.get('success_rate')}, ep_length={r.get('mean_ep_length')}"
+            )
+
+        curriculum_msg = (
+            f"Increase the difficulty of this environment for curriculum learning. "
+            f"The agent has already been trained and achieved these results: {results_summary}. "
+            f"Make it harder: increase obstacles, reduce time limits, make rewards sparser, "
+            f"add complexity, increase stochasticity, or tighten success criteria. "
+            f"The observation and action spaces MUST remain the same shape and type "
+            f"so the trained model can continue learning."
+        )
+        try:
+            spec_json = env.env_spec_json or "{}"
+            updated = await architect_service.iterate_env(env.code, spec_json, curriculum_msg)
+            new_code = updated.get("updated_code", env.code)
+            new_spec = updated.get("updated_spec", spec_json)
+            if isinstance(new_spec, dict):
+                new_spec = json.dumps(new_spec)
+
+            test_results = await sandbox_runner.run_all_tests(new_code)
+            if test_results["passed"] >= 5:
+                env.version = (env.version or 1) + 1
+                env.code = new_code
+                env.env_spec_json = new_spec
+                new_version = EnvVersion(
+                    env_id=env_id, version=env.version,
+                    code=new_code, spec_json=new_spec,
+                    change_summary=f"Curriculum: difficulty increased ({test_results['passed']}/{test_results['total']} tests)",
+                )
+                db.add(new_version)
+                await db.commit()
+                logger.info("Curriculum: env %d upgraded to v%d", env_id, env.version)
+        except Exception as e:
+            logger.warning("Curriculum iteration failed, training on current env: %s", e)
+
     env_version = env.version if env else 1
 
     config = {
@@ -641,9 +794,25 @@ async def start_training(env_id: int, data: dict = None, db: AsyncSession = Depe
         "learning_rate": data.get("learning_rate"),
         "n_eval_episodes": data.get("n_eval_episodes", 5),
         "env_version": env_version,
+        "batch_size": data.get("batch_size"),
+        "gamma": data.get("gamma"),
+        "net_arch": data.get("net_arch"),
     }
+    if data.get("continue_from"):
+        config["continue_from"] = True
+
     try:
         run = await training_service.start_training(env_id, config, db)
+
+        # Deduct training credits
+        if user_id:
+            training_cost = CreditService.calculate_training_cost(config["total_timesteps"])
+            await credit_service.consume_credits(
+                user_id, training_cost, "training", db,
+                resource_id=run.id,
+                details={"env_id": env_id, "algorithm": run.algorithm, "timesteps": config["total_timesteps"]},
+            )
+
         return {
             "run_id": run.id,
             "env_id": run.env_id,
@@ -651,6 +820,8 @@ async def start_training(env_id: int, data: dict = None, db: AsyncSession = Depe
             "status": run.status,
             "total_timesteps": config["total_timesteps"],
             "config": json.loads(run.config_json) if run.config_json else config,
+            "curriculum_applied": is_curriculum,
+            "credits_used": round(CreditService.calculate_training_cost(config["total_timesteps"]), 4) if user_id else 0,
         }
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -893,7 +1064,9 @@ async def list_sessions():
 # ──────────────────────────────────────────────────
 
 @router.post("/generate-from-paper")
+@limiter.limit("3/minute")
 async def generate_from_paper(
+    request: Request,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     auth_user: Optional[dict] = Depends(get_optional_user),
@@ -967,6 +1140,8 @@ async def create_research_project(
 ):
     from app.models import ResearchProject
     from app.services.lab_service import lab_service
+    from app.schemas import ExperimentConfig
+    from pydantic import ValidationError
 
     title = data.get("title", "").strip()
     if not title:
@@ -974,11 +1149,21 @@ async def create_research_project(
 
     research_user_id = await _resolve_user_id(db, auth_user)
 
+    experiment_config_json: Optional[str] = None
+    raw_cfg = data.get("experiment_config")
+    if raw_cfg:
+        try:
+            cfg = ExperimentConfig.model_validate(raw_cfg)
+            experiment_config_json = cfg.model_dump_json()
+        except ValidationError as e:
+            raise HTTPException(422, f"Invalid experiment_config: {e.errors()}")
+
     project = await lab_service.create_project(
         db, title,
         description=data.get("description", ""),
         topic=data.get("topic", ""),
         user_id=research_user_id,
+        experiment_config_json=experiment_config_json,
     )
 
     return {"id": project.id, "title": project.title, "status": project.status}
@@ -1262,3 +1447,120 @@ for _ in range({max_steps}):
 """
 
     return files
+
+
+# ── Smart Suggestions (AI-driven quick actions) ─────────────────
+
+@router.get("/builder/{env_id}/suggestions")
+@limiter.limit("10/minute")
+async def get_suggestions(request: Request, env_id: int, db: AsyncSession = Depends(get_db)):
+    """Analyze env code + training results and return 4-6 smart next-step suggestions."""
+    result = await db.execute(select(RLEnvironment).where(RLEnvironment.id == env_id))
+    env = result.scalar_one_or_none()
+    if not env:
+        raise HTTPException(404, "Environment not found")
+
+    runs_result = await db.execute(
+        select(TrainingRun).where(TrainingRun.env_id == env_id)
+        .order_by(desc(TrainingRun.created_at)).limit(3)
+    )
+    runs = runs_result.scalars().all()
+
+    training_ctx = ""
+    has_completed_training = False
+    best_reward = None
+    best_success = None
+    for run in runs:
+        if run.status == "completed" and run.results_json:
+            has_completed_training = True
+            r = json.loads(run.results_json)
+            reward = r.get("mean_reward")
+            success = r.get("success_rate")
+            if best_reward is None or (reward and reward > best_reward):
+                best_reward = reward
+            if best_success is None or (success and success > best_success):
+                best_success = success
+            training_ctx += (
+                f"\n- {run.algorithm}: mean_reward={r.get('mean_reward')}, "
+                f"success_rate={r.get('success_rate')}, "
+                f"ep_length={r.get('mean_ep_length')}, "
+                f"timesteps={r.get('total_timesteps')}"
+            )
+
+    spec = json.loads(env.env_spec_json) if env.env_spec_json else {}
+    obs_space = spec.get("observation_space", {})
+    act_space = spec.get("action_space", {})
+    reward_fn = spec.get("reward_function", {})
+    params = spec.get("parameters", {})
+
+    prompt = (
+        f"You are an RL environment design advisor. Analyze this environment and suggest "
+        f"4-6 concrete next steps the user can take to improve it.\n\n"
+        f"ENVIRONMENT:\n"
+        f"- Name: {env.name}\n"
+        f"- Domain: {env.domain}\n"
+        f"- Difficulty: {env.difficulty}\n"
+        f"- Description: {env.description or 'N/A'}\n"
+        f"- Obs space: {env.observation_space}\n"
+        f"- Action space: {env.action_space}\n"
+        f"- Reward: {env.reward_description}\n"
+        f"- Parameters: {json.dumps(params)[:500]}\n\n"
+    )
+
+    if has_completed_training:
+        prompt += f"TRAINING RESULTS:{training_ctx}\n\n"
+
+    prompt += (
+        f"Based on the environment's current state"
+        f"{' and training results' if has_completed_training else ''}, "
+        f"suggest exactly 5 next steps. Each suggestion must be:\n"
+        f"- A short action label (max 6 words) shown as a button\n"
+        f"- A chat message (1-2 sentences) that will be sent to the builder agent\n"
+        f"- A category: one of 'iterate', 'difficulty', 'training', 'experiment'\n\n"
+        f"Rules for suggestions:\n"
+        f"- Be SPECIFIC to this environment, not generic advice\n"
+        f"- If training succeeded (high success rate), suggest harder challenges\n"
+        f"- If training struggled, suggest making rewards denser or simplifying\n"
+        f"- Always include at least one env modification and one training suggestion\n"
+        f"- If no training yet, focus on env improvements and first training\n"
+        f"- Suggestions should be diverse: mix difficulty, reward, obs, action changes\n\n"
+        f"Return ONLY a JSON array:\n"
+        f'[{{"label": "...", "message": "...", "category": "..."}}]\n'
+        f"No other text."
+    )
+
+    from app.services.ai_service import ai_service
+    try:
+        response = await ai_service._call_kimi(
+            "You are an RL advisor. Return only valid JSON arrays.",
+            prompt,
+            max_tokens=2000,
+        )
+    except Exception:
+        try:
+            response = await ai_service._call_sonnet(
+                "You are an RL advisor. Return only valid JSON arrays.",
+                prompt,
+                max_tokens=2000,
+            )
+        except Exception:
+            return []
+
+    import re as _re
+    match = _re.search(r'\[.*\]', response, _re.DOTALL)
+    if match:
+        try:
+            suggestions = json.loads(match.group())
+            valid = []
+            for s in suggestions[:6]:
+                if isinstance(s, dict) and "label" in s and "message" in s:
+                    valid.append({
+                        "label": str(s["label"])[:40],
+                        "message": str(s["message"])[:300],
+                        "category": str(s.get("category", "iterate"))[:20],
+                    })
+            return valid
+        except json.JSONDecodeError:
+            pass
+
+    return []

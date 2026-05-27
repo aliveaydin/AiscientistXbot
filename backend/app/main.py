@@ -1,19 +1,22 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 import os
 import asyncio
 import logging
 from datetime import datetime
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.database import init_db
-from app.routes import dashboard, tweets, articles, settings_route, blog, lab, public, rl_envs, rlforge, users
+from app.routes import dashboard, tweets, articles, settings_route, blog, lab, public, rl_envs, rlforge, users, admin, marketing, agents, feedback, email as email_routes
 from app.services.scheduler_service import scheduler_service
 from app.services.article_service import ArticleService
 from app.services.training_service import TrainingService
 from app.database import async_session
+from app.rate_limit import limiter
 
 logger = logging.getLogger("app")
 
@@ -68,15 +71,69 @@ async def _seed_template_envs():
         await db.commit()
 
 
+async def _seed_subscription_plans():
+    """Seed default subscription plans if not already present."""
+    from app.models import SubscriptionPlan
+    from sqlalchemy import select
+
+    plans = [
+        {
+            "name": "free", "display_name": "Free", "price_monthly": 0,
+            "monthly_credits": 0, "max_environments": 1, "max_training_steps": 50000,
+            "pdf_download": False, "github_export": False, "can_buy_credits": False,
+        },
+        {
+            "name": "starter", "display_name": "Starter", "price_monthly": 19,
+            "monthly_credits": 0, "max_environments": 5, "max_training_steps": 500000,
+            "pdf_download": True, "github_export": True, "can_buy_credits": True,
+        },
+        {
+            "name": "pro", "display_name": "Pro", "price_monthly": 49,
+            "monthly_credits": 0, "max_environments": 20, "max_training_steps": 2000000,
+            "pdf_download": True, "github_export": True, "can_buy_credits": True,
+        },
+        {
+            "name": "lab", "display_name": "Lab", "price_monthly": 149,
+            "monthly_credits": 0, "max_environments": 100, "max_training_steps": 5000000,
+            "pdf_download": True, "github_export": True, "can_buy_credits": True,
+        },
+    ]
+
+    async with async_session() as db:
+        for plan_data in plans:
+            result = await db.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.name == plan_data["name"])
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                for key, val in plan_data.items():
+                    if key != "name":
+                        setattr(existing, key, val)
+                logger.info("Updated subscription plan: %s", plan_data["display_name"])
+            else:
+                db.add(SubscriptionPlan(**plan_data))
+                logger.info("Seeded subscription plan: %s", plan_data["display_name"])
+        await db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
     await init_db()
 
+    # Apply additive ALTER TABLE migrations for advanced research settings.
+    try:
+        from migrate_advanced_settings import migrate_from_url
+        from app.config import settings as _settings
+        migrate_from_url(_settings.database_url)
+    except Exception as e:  # never block startup on a migration hiccup
+        logger.warning("advanced_settings migration skipped: %s", e)
+
     async with async_session() as db:
         await ArticleService.scan_and_import_articles(db)
 
     await _seed_template_envs()
+    await _seed_subscription_plans()
 
     training_svc = TrainingService()
     await training_svc.recover_orphan_runs()
@@ -103,11 +160,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Twitter Bot AI Agent",
-    description="AI-powered Twitter bot that generates popular science tweets from articles",
+    title="kualia.ai API",
+    description="AI-powered RL environment generation, training, and research platform",
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS
 app.add_middleware(
@@ -134,6 +195,11 @@ app.include_router(public.router)
 app.include_router(rl_envs.router)
 app.include_router(rlforge.router)
 app.include_router(users.router)
+app.include_router(admin.router)
+app.include_router(marketing.router)
+app.include_router(agents.router)
+app.include_router(feedback.router)
+app.include_router(email_routes.router)
 
 # Serve frontend static files - check multiple possible locations
 frontend_candidates = [

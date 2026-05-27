@@ -1,6 +1,10 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List, Dict, Any
 from datetime import datetime
+
+
+SUPPORTED_ALGORITHMS = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN"}
+SUPPORTED_VARIANT_ROLES = {"treatment", "baseline", "control"}
 
 
 # --- Article Schemas ---
@@ -154,10 +158,78 @@ class ActivityLogResponse(BaseModel):
 
 
 # --- Research Lab Schemas ---
+
+
+class EnvVariantConfig(BaseModel):
+    """One environment variant in an ablation study.
+
+    `role` controls how the env is interpreted in the final paper:
+      - treatment: hypothesis applied
+      - baseline:  hypothesis NOT applied (control comparison)
+      - control:   any additional ablation variant
+    `modifier` is a short instruction injected into the env-generation prompt
+    so the underlying environment is otherwise identical to its siblings.
+    """
+    label: str = Field(..., min_length=1, max_length=200)
+    role: str = "treatment"
+    modifier: Optional[str] = None
+
+    @field_validator("role")
+    @classmethod
+    def _validate_role(cls, v: str) -> str:
+        v = (v or "").strip().lower()
+        if v not in SUPPORTED_VARIANT_ROLES:
+            raise ValueError(f"role must be one of {SUPPORTED_VARIANT_ROLES}")
+        return v
+
+
+class HyperparamsConfig(BaseModel):
+    learning_rate: Optional[float] = None
+    batch_size: Optional[int] = None
+    gamma: Optional[float] = None
+    net_arch: Optional[str] = None  # "small" | "medium" | "large"
+
+
+class ExperimentConfig(BaseModel):
+    """Advanced settings for a research project."""
+    env_variants: List[EnvVariantConfig] = Field(default_factory=list)
+    algorithms: List[str] = Field(default_factory=lambda: ["PPO"])
+    n_seeds: int = Field(1, ge=1, le=10)
+    timesteps: int = Field(50000, ge=1000, le=2_000_000)
+    n_eval_episodes: int = Field(10, ge=1, le=100)
+    hyperparams: Optional[HyperparamsConfig] = None
+
+    @field_validator("algorithms")
+    @classmethod
+    def _validate_algorithms(cls, v: List[str]) -> List[str]:
+        upper = [a.upper() for a in v if a]
+        bad = [a for a in upper if a not in SUPPORTED_ALGORITHMS]
+        if bad:
+            raise ValueError(f"unsupported algorithms: {bad}. Allowed: {sorted(SUPPORTED_ALGORITHMS)}")
+        if not upper:
+            return ["PPO"]
+        # de-duplicate while preserving order
+        seen: List[str] = []
+        for a in upper:
+            if a not in seen:
+                seen.append(a)
+        return seen
+
+    @field_validator("env_variants")
+    @classmethod
+    def _validate_variants(cls, v: List[EnvVariantConfig]) -> List[EnvVariantConfig]:
+        # If user supplies variants, ensure unique labels.
+        labels = [x.label.strip().lower() for x in v]
+        if len(labels) != len(set(labels)):
+            raise ValueError("env_variants labels must be unique")
+        return v
+
+
 class ResearchProjectCreate(BaseModel):
     title: str
     description: Optional[str] = None
     topic: Optional[str] = None
+    experiment_config: Optional[ExperimentConfig] = None
 
 
 class ResearchProjectResponse(BaseModel):

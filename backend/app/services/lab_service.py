@@ -1,38 +1,49 @@
 """
 Research Lab Service — Automated RL Research Pipeline
 
-Phases: research → design → experiment → analyze → write → review
+Phases: hypothesis → design → experiment → analyze → write → review
+
+hypothesis: Formulate original hypothesis from user's idea (NO ArXiv)
+design:     Generate Gymnasium environments from hypothesis specs
+experiment: Train agents with configured algorithms
+analyze:    Interpret real training results against hypothesis
+write:      Search ArXiv for supporting literature + write full paper
+review:     Peer review the draft
+
 Agents: Sage (Research Strategist) + Atlas (RL Engineer)
 
-Unique: The pipeline generates REAL RL environments and trains REAL agents,
+The pipeline generates REAL RL environments and trains REAL agents,
 producing papers backed by actual experimental data.
 """
 import json
 import logging
 import re
 import asyncio
+import contextvars
 from datetime import datetime
 from typing import Optional, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_active_usage_acc = contextvars.ContextVar("_active_usage_acc", default=None)
+
 from app.models import (
     ResearchProject, AgentMessage, AgentWork, ResearchPaper,
-    Article, ProjectReference, RLEnvironment, EnvVersion, TrainingRun,
+    Article, ProjectReference, RLEnvironment, EnvVersion, TrainingRun, User,
 )
 from app.database import async_session
 
 logger = logging.getLogger("lab")
 
-PHASES = ["research", "design", "experiment", "analyze", "write", "review"]
+PHASES = ["hypothesis", "design", "experiment", "analyze", "write", "review"]
 
 AGENTS = {
     "sage": {
         "name": "Sage",
         "role": "Research Strategist",
         "color": "#f59e0b",
-        "model_preference": "sonnet",
+        "model_preference": "kimi",
         "system_prompt": (
             "You are Sage, a world-class AI Research Strategist specializing in Reinforcement Learning. "
             "You read academic papers with deep comprehension, identify research gaps, "
@@ -68,25 +79,26 @@ AGENTS = {
 class LabService:
     # ── LLM Calls ────────────────────────────────────────────────
 
-    async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str, max_tokens: int = 16000) -> str:
+    async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str, max_tokens: int = 16000, usage_acc=None) -> str:
         from app.services.ai_service import ai_service
+        acc = usage_acc or _active_usage_acc.get(None)
         agent = AGENTS[agent_key]
         pref = agent["model_preference"]
         if pref == "kimi":
             try:
-                return await ai_service._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens)
+                return await ai_service._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=acc)
             except Exception:
                 pass
         elif pref == "sonnet":
             try:
-                return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514", max_tokens=max_tokens)
+                return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-6", max_tokens=max_tokens, usage_acc=acc)
             except Exception:
                 pass
         try:
-            return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-20250514", max_tokens=max_tokens)
+            return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-6", max_tokens=max_tokens, usage_acc=acc)
         except Exception:
             pass
-        return await ai_service._call_openai(system_prompt, user_prompt, max_tokens=max_tokens)
+        return await ai_service._call_openai(system_prompt, user_prompt, max_tokens=min(max_tokens, 4096), usage_acc=acc)
 
     # ── Data Helpers ─────────────────────────────────────────────
 
@@ -325,65 +337,151 @@ class LabService:
         slug = re.sub(r'[^a-z0-9]+', '-', text.lower()).strip('-')
         return slug[:200] or "research-env"
 
-    # ── Phase 1: Research ────────────────────────────────────────
+    # ── Phase 1: Hypothesis ─────────────────────────────────────
 
-    async def _run_research(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] RESEARCH phase for project {project.id}")
+    async def _run_hypothesis(self, db: AsyncSession, project: ResearchProject):
+        logger.info(f"[Lab] HYPOTHESIS phase for project {project.id}")
 
-        ref_count = await db.execute(
-            select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project.id)
-        )
-        if (ref_count.scalar() or 0) == 0 and project.topic:
-            await self._search_and_import_topic_papers(db, project)
-
-        paper_ctx = await self._get_project_paper_context(db, project)
+        topic = project.topic or project.title
+        description = project.description or ""
 
         prompt = (
-            f"You are conducting a research study on: \"{project.topic or project.title}\"\n\n"
-            f"Reference papers from ArXiv:\n\n{paper_ctx}\n\n"
-            f"Based on these papers and your expertise, create a complete research plan.\n\n"
-            f"Your plan must include:\n"
-            f"1. **Literature Summary** — Key findings from the papers, identified gaps\n"
-            f"2. **Research Question** — A specific, testable question\n"
-            f"3. **Hypothesis** — What you expect to find and why\n"
-            f"4. **Experimental Design** — What RL environments to build and test\n"
-            f"5. **Expected Outcomes** — What would confirm/reject the hypothesis\n\n"
-            f"CRITICAL: At the end of your response, you MUST include a structured JSON block between "
-            f"===RESEARCH_PLAN=== and ===END_PLAN=== markers with this exact format:\n\n"
+            f"You are formulating an ORIGINAL research hypothesis for an RL study. "
+            f"The user has provided this specific research idea:\n\n"
+            f"{'=' * 60}\n"
+            f"TOPIC: \"{topic}\"\n"
+            f"{f'DESCRIPTION: {description}' if description else ''}\n"
+            f"{'=' * 60}\n\n"
+            f"IMPORTANT: You must treat the user's description as the CORE of the research. "
+            f"Do NOT dilute, simplify, or generalize their idea. Every aspect of their description "
+            f"must be directly reflected in the hypothesis and experimental design.\n\n"
+            f"DO NOT reference any external papers or literature. This phase is about formulating "
+            f"an ORIGINAL hypothesis purely from the user's idea. Literature will come later.\n\n"
+            f"Create a research plan with:\n\n"
+            f"1. **Research Question** — A specific, testable question that directly captures "
+            f"the FULL scope of the user's idea. If they mention agent behavior, environment dynamics, "
+            f"AND learning mechanisms, the question must address ALL of these.\n\n"
+            f"2. **Hypothesis** — A clear, falsifiable hypothesis. Break it into sub-hypotheses if "
+            f"the user's idea has multiple aspects (e.g., environment dynamics + agent self-observation "
+            f"+ experience-based learning).\n\n"
+            f"3. **Experimental Design** — Design RL environments that test EVERY aspect of the hypothesis. "
+            f"This is critical: the environment design must include:\n"
+            f"   - **Environment dynamics** — How the environment behaves and changes\n"
+            f"   - **Agent observation requirements** — What the agent MUST observe, including "
+            f"self-observation data (own action history, reward history, strategy effectiveness)\n"
+            f"   - **Agent experience storage** — How the agent tracks and uses past experience\n"
+            f"   - **Reward structure** — How rewards are shaped to encourage the target behavior\n"
+            f"   - **Success criteria** — What constitutes the agent 'solving' the environment\n\n"
+            f"4. **Expected Outcomes** — What results confirm or reject EACH sub-hypothesis?\n\n"
+            f"CRITICAL: Include a structured JSON block at the end:\n\n"
             f"===RESEARCH_PLAN===\n"
             f'{{\n'
-            f'  "hypothesis": "one sentence hypothesis",\n'
+            f'  "hypothesis": "the full hypothesis, covering all aspects of the user\'s idea",\n'
+            f'  "sub_hypotheses": ["H1: ...", "H2: ...", "H3: ..."],\n'
             f'  "environments": [\n'
             f'    {{\n'
-            f'      "name": "short descriptive name",\n'
-            f'      "description": "A detailed natural language description of the RL environment to build. '
-            f'Include what the agent observes, what actions it takes, how rewards work, and what makes it interesting. '
-            f'Be specific enough for an AI system to generate working Gymnasium-compatible Python code from this.",\n'
+            f'      "name": "descriptive name directly reflecting the research topic",\n'
+            f'      "description": "EXTREMELY DETAILED description. This is the blueprint for building '
+            f'a Gymnasium environment. You MUST specify:\\n'
+            f'1. OBSERVATION SPACE: List every dimension. Include environment state AND agent self-observation '
+            f'(own recent actions, recent rewards, strategy metrics, internal state estimates).\\n'
+            f'2. ACTION SPACE: What actions the agent takes.\\n'
+            f'3. TRANSITION DYNAMICS: How the environment changes, especially any dynamic/adaptive elements.\\n'
+            f'4. REWARD FUNCTION: Exact reward structure. Include rewards for the TARGET behavior from the hypothesis '
+            f'(e.g., reward for adapting, reward for using experience, penalty for repeating failed strategies).\\n'
+            f'5. EPISODE TERMINATION: When episodes end.\\n'
+            f'6. AGENT-SIDE REQUIREMENTS: Any self-observation, experience tracking, or meta-learning '
+            f'mechanisms that must be built into the observation space or reward.",\n'
             f'      "domain": "one of: control, game, finance, robotics, navigation, optimization, custom",\n'
-            f'      "difficulty": "easy or medium or hard"\n'
+            f'      "difficulty": "easy or medium or hard",\n'
+            f'      "variant_role": "treatment | baseline | control",\n'
+            f'      "variant_label": "short human tag, e.g. with self-observation"\n'
             f'    }}\n'
             f'  ],\n'
             f'  "training_config": {{\n'
             f'    "algorithms": ["PPO", "SAC"],\n'
-            f'    "timesteps": 50000\n'
+            f'    "timesteps": 50000,\n'
+            f'    "n_seeds": 1\n'
             f'  }},\n'
             f'  "metrics": ["mean_reward", "success_rate", "convergence_speed"]\n'
             f'}}\n'
             f'===END_PLAN===\n\n'
-            f"Design exactly 2 environments that test different aspects of your hypothesis. "
-            f"The environment descriptions must be detailed enough for an AI to generate working Gymnasium code."
         )
 
+        exp_cfg = self._load_experiment_config(project)
+        if exp_cfg and exp_cfg.get("env_variants"):
+            variants = exp_cfg["env_variants"]
+            algos = exp_cfg.get("algorithms") or ["PPO"]
+            timesteps = exp_cfg.get("timesteps", 50000)
+            n_seeds = exp_cfg.get("n_seeds", 1)
+            variants_block = "\n".join(
+                f"  {i+1}. [{v.get('role','treatment').upper()}] {v.get('label','variant')} — "
+                f"{(v.get('modifier') or '(no extra modifier; the canonical version)').strip()}"
+                for i, v in enumerate(variants)
+            )
+            prompt += (
+                "USER-DEFINED ABLATION SETUP (MANDATORY — DO NOT DEVIATE):\n"
+                f"You MUST design exactly {len(variants)} environments, one per variant below. "
+                "Each environment must share the SAME base task, observation/action shape, episode "
+                "length and reward scale; the ONLY difference between siblings is the `modifier`. "
+                "This is critical: a baseline/treatment comparison is only valid when everything else "
+                "is held constant.\n\n"
+                f"{variants_block}\n\n"
+                f"In the JSON plan, the `environments` array MUST contain {len(variants)} entries in "
+                "the same order as the variants above. Each entry MUST include `variant_role` and "
+                "`variant_label` matching the variant.\n\n"
+                f"`training_config.algorithms` MUST equal {algos}, `training_config.timesteps` MUST "
+                f"equal {timesteps}, `training_config.n_seeds` MUST equal {n_seeds}.\n\n"
+                "Names should directly reflect the research topic AND the variant role."
+            )
+        else:
+            prompt += (
+                "Design exactly 2 environments that test different aspects of the hypothesis. "
+                "Each env description must be detailed enough for an AI code generator to build a "
+                "complete Gymnasium environment including ALL agent-side observation requirements. "
+                "Names should directly reflect the research topic. "
+                "For each environment, also set `variant_role` (`treatment` for the hypothesis-applied "
+                "version, `baseline` for the control without it) and a short `variant_label`."
+            )
+
         response = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
-        await self._save_message(db, project.id, "sage", response, "research")
+        await self._save_message(db, project.id, "sage", response, "hypothesis")
 
         plan = self._parse_research_plan(response)
+        # Whenever a user-supplied config exists, force its values into the plan
+        # so downstream phases use the user's choices regardless of LLM compliance.
+        if plan and exp_cfg:
+            plan.setdefault("training_config", {})
+            plan["training_config"]["algorithms"] = exp_cfg.get("algorithms") or plan["training_config"].get("algorithms", ["PPO"])
+            plan["training_config"]["timesteps"] = exp_cfg.get("timesteps", plan["training_config"].get("timesteps", 50000))
+            plan["training_config"]["n_seeds"] = exp_cfg.get("n_seeds", 1)
+            plan["training_config"]["n_eval_episodes"] = exp_cfg.get("n_eval_episodes", 10)
+            if exp_cfg.get("hyperparams"):
+                plan["training_config"]["hyperparams"] = exp_cfg["hyperparams"]
+            # Ensure each env spec carries its variant role/label even if the LLM forgot.
+            user_variants = exp_cfg.get("env_variants") or []
+            llm_envs = plan.get("environments") or []
+            if len(llm_envs) < len(user_variants):
+                # Pad with stubs the design phase will still attempt to render.
+                for v in user_variants[len(llm_envs):]:
+                    llm_envs.append({
+                        "name": v.get("label", "variant"),
+                        "description": v.get("modifier", "") or v.get("label", ""),
+                        "domain": "custom", "difficulty": "medium",
+                    })
+                plan["environments"] = llm_envs
+            for env_spec, var in zip(plan.get("environments", []), user_variants):
+                env_spec["variant_role"] = var.get("role", "treatment")
+                env_spec["variant_label"] = var.get("label", "")
+                if var.get("modifier") and "modifier" not in env_spec:
+                    env_spec["modifier"] = var["modifier"]
+
         if plan:
             project.selected_idea = json.dumps(plan)
-            await self._save_work(db, project.id, "sage", "research_plan", "Research Plan", response, metadata=plan)
+            await self._save_work(db, project.id, "sage", "hypothesis", "Research Hypothesis", response, metadata=plan)
         else:
             project.selected_idea = response
-            await self._save_work(db, project.id, "sage", "research_plan", "Research Plan", response)
+            await self._save_work(db, project.id, "sage", "hypothesis", "Research Hypothesis", response)
 
         await db.commit()
 
@@ -398,7 +496,7 @@ class LabService:
         env_specs = plan.get("environments", [])
 
         if not env_specs:
-            history = await self._get_conversation_history(db, project.id, ["research"])
+            history = await self._get_conversation_history(db, project.id, ["hypothesis", "research"])
             fallback_prompt = (
                 f"Based on this research plan:\n\n{history[:4000]}\n\n"
                 f"Design 2 RL environments for this study. For each, provide:\n"
@@ -427,22 +525,60 @@ class LabService:
         )
         await db.commit()
 
+        topic = project.topic or project.title
+        description = project.description or ""
+        hypothesis_text = plan.get("hypothesis", "")
+        sub_hypotheses = plan.get("sub_hypotheses", [])
+        hypothesis_prefix = ""
+        if hypothesis_text or description:
+            parts = [f"RESEARCH HYPOTHESIS: {hypothesis_text}"] if hypothesis_text else []
+            if sub_hypotheses:
+                parts.append("SUB-HYPOTHESES: " + "; ".join(sub_hypotheses))
+            if description:
+                parts.append(f"USER'S ORIGINAL IDEA: {description}")
+            hypothesis_prefix = "\n".join(parts) + "\n\nENVIRONMENT SPECIFICATION:\n"
+
+        # If the user supplied an experiment_config, we drop the hard cap so all
+        # requested variants get generated; otherwise keep the legacy 3-env safety cap.
+        exp_cfg = self._load_experiment_config(project)
+        max_envs = max(len(exp_cfg.get("env_variants", [])), 1) if exp_cfg else 3
+        env_specs_to_build = env_specs[:max_envs]
+
         generated_envs = []
-        for i, spec in enumerate(env_specs[:3]):
+        for i, spec in enumerate(env_specs_to_build):
             env_name = spec.get("name", f"Research Env {i+1}")
             env_desc = spec.get("description", env_name)
             env_domain = spec.get("domain", "custom")
             env_difficulty = spec.get("difficulty", "medium")
+            variant_role = (spec.get("variant_role") or "").strip().lower() or None
+            variant_label = (spec.get("variant_label") or "").strip() or None
+            variant_modifier = (spec.get("modifier") or "").strip()
+
+            full_desc_parts = [hypothesis_prefix + env_desc]
+            if variant_label or variant_role or variant_modifier:
+                tag_line = (
+                    f"\n\nABLATION VARIANT: {variant_role or 'treatment'} — "
+                    f"{variant_label or 'variant'}"
+                )
+                if variant_modifier:
+                    tag_line += (
+                        "\nMODIFIER (apply ONLY this difference vs. sibling variants; everything else "
+                        f"must be IDENTICAL across variants): {variant_modifier}"
+                    )
+                full_desc_parts.append(tag_line)
+            full_desc = "".join(full_desc_parts)
 
             await self._save_message(
                 db, project.id, "atlas",
-                f"**Environment {i+1}/{len(env_specs[:3])}:** Generating *{env_name}*...",
+                f"**Environment {i+1}/{len(env_specs_to_build)}:** Generating *{env_name}*"
+                + (f" _(variant: {variant_label or variant_role})_" if (variant_label or variant_role) else "")
+                + "...",
                 "design"
             )
             await db.commit()
 
             try:
-                gen = await architect_service.generate_env_code(env_desc, env_domain, env_difficulty)
+                gen = await architect_service.generate_env_code(full_desc, env_domain, env_difficulty)
                 code = gen.get("code", "")
                 spec_json = json.dumps(gen.get("env_spec", {})) if isinstance(gen.get("env_spec"), dict) else gen.get("env_spec", "{}")
 
@@ -489,6 +625,8 @@ class LabService:
                     generation_log="\n".join(log_lines),
                     user_id=project.user_id,
                     research_project_id=project.id,
+                    variant_role=variant_role,
+                    variant_label=variant_label,
                 )
                 db.add(env)
                 await db.flush()
@@ -500,6 +638,8 @@ class LabService:
 
                 generated_envs.append({
                     "id": env.id, "name": env.name,
+                    "variant_role": variant_role,
+                    "variant_label": variant_label,
                     "tests_passed": test_results["passed"],
                     "tests_total": test_results["total"],
                 })
@@ -517,9 +657,12 @@ class LabService:
                 )
             await db.commit()
 
-        summary = f"**Design complete.** {len(generated_envs)}/{len(env_specs[:3])} environments built.\n"
+        summary = f"**Design complete.** {len(generated_envs)}/{len(env_specs_to_build)} environments built.\n"
         for e in generated_envs:
-            summary += f"- **{e['name']}** (ID: {e['id']}) — {e['tests_passed']}/{e['tests_total']} tests\n"
+            tag = ""
+            if e.get("variant_label") or e.get("variant_role"):
+                tag = f" _[{e.get('variant_role') or 'variant'}: {e.get('variant_label') or '—'}]_"
+            summary += f"- **{e['name']}**{tag} (ID: {e['id']}) — {e['tests_passed']}/{e['tests_total']} tests\n"
 
         await self._save_message(db, project.id, "atlas", summary, "design")
         await self._save_work(
@@ -566,39 +709,77 @@ class LabService:
             return
 
         plan = self._parse_research_plan(project.selected_idea or "")
-        tc = plan.get("training_config", {})
-        timesteps = tc.get("timesteps", 50000)
-        requested_algos = [a.upper() for a in tc.get("algorithms", []) if a.upper() in ("PPO", "SAC", "DQN")]
+        tc = plan.get("training_config", {}) if plan else {}
+        exp_cfg = self._load_experiment_config(project)
+
+        # Source of truth for algos/timesteps/seeds: user's experiment_config when present,
+        # otherwise the LLM-generated training_config from the hypothesis phase.
+        supported = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN"}
+        if exp_cfg:
+            user_algos = [a.upper() for a in (exp_cfg.get("algorithms") or []) if a.upper() in supported]
+            timesteps = int(exp_cfg.get("timesteps", 50000))
+            n_seeds = max(1, int(exp_cfg.get("n_seeds", 1)))
+            n_eval_episodes = int(exp_cfg.get("n_eval_episodes", 10))
+            hyperparams = exp_cfg.get("hyperparams") or {}
+        else:
+            user_algos = [a.upper() for a in tc.get("algorithms", []) if a.upper() in supported]
+            timesteps = int(tc.get("timesteps", 50000))
+            n_seeds = 1
+            n_eval_episodes = 10
+            hyperparams = {}
 
         run_ids = []
         for env in environments:
             auto_algo = training_service._select_algorithm(env.code or "")
-            algos = [auto_algo]
-            for a in requested_algos:
-                if a != auto_algo and a not in algos:
-                    algos.append(a)
-                    break
-            if len(algos) < 2:
-                backup = "DQN" if auto_algo not in ("DQN",) else "PPO"
-                if backup not in algos:
-                    algos.append(backup)
+            if exp_cfg and user_algos:
+                # User explicitly chose algorithms — honour them exactly, no auto/backup.
+                algos = list(user_algos)
+            else:
+                algos = [auto_algo]
+                for a in user_algos:
+                    if a != auto_algo and a not in algos:
+                        algos.append(a)
+                        break
+                if len(algos) < 2:
+                    backup = "DQN" if auto_algo not in ("DQN",) else "PPO"
+                    if backup not in algos:
+                        algos.append(backup)
 
             for algo in algos:
-                config = {"total_timesteps": timesteps, "algorithm": algo, "n_eval_episodes": 10}
-                try:
-                    run = await training_service.start_training(env.id, config, db)
-                    run_ids.append(run.id)
-                    await self._save_message(
-                        db, project.id, "atlas",
-                        f"Training **{algo}** on **{env.name}** ({timesteps:,} timesteps)...",
-                        "experiment"
-                    )
-                except Exception as e:
-                    await self._save_message(
-                        db, project.id, "atlas",
-                        f"Failed to start {algo} on {env.name}: {str(e)[:200]}",
-                        "experiment"
-                    )
+                for seed_idx in range(n_seeds):
+                    seed_value = seed_idx
+                    config: dict = {
+                        "total_timesteps": timesteps,
+                        "algorithm": algo,
+                        "n_eval_episodes": n_eval_episodes,
+                        "seed": seed_value,
+                        "variant_role": getattr(env, "variant_role", None),
+                    }
+                    if hyperparams.get("learning_rate") is not None:
+                        config["learning_rate"] = hyperparams["learning_rate"]
+                    if hyperparams.get("batch_size") is not None:
+                        config["batch_size"] = hyperparams["batch_size"]
+                    if hyperparams.get("gamma") is not None:
+                        config["gamma"] = hyperparams["gamma"]
+                    if hyperparams.get("net_arch"):
+                        config["net_arch"] = hyperparams["net_arch"]
+                    try:
+                        run = await training_service.start_training(env.id, config, db)
+                        run_ids.append(run.id)
+                        seed_tag = f" seed={seed_value}" if n_seeds > 1 else ""
+                        variant_tag = f" [{env.variant_role}]" if getattr(env, "variant_role", None) else ""
+                        await self._save_message(
+                            db, project.id, "atlas",
+                            f"Training **{algo}** on **{env.name}**{variant_tag}{seed_tag} "
+                            f"({timesteps:,} timesteps)...",
+                            "experiment"
+                        )
+                    except Exception as e:
+                        await self._save_message(
+                            db, project.id, "atlas",
+                            f"Failed to start {algo} on {env.name} (seed {seed_value}): {str(e)[:200]}",
+                            "experiment"
+                        )
 
         if not run_ids:
             await self._save_message(db, project.id, "atlas", "All training runs failed to start.", "experiment")
@@ -721,12 +902,32 @@ class LabService:
 
         curve_ctx = "\n".join(curve_summaries) if curve_summaries else "No curve data."
 
-        research_history = await self._get_conversation_history(db, project.id, ["research"])
+        research_history = await self._get_conversation_history(db, project.id, ["hypothesis", "research"])
+
+        # Build an ablation-aware results table for the analyst.
+        ablation_table = await self._build_results_table(db, project.id)
+        env_meta_res = await db.execute(
+            select(RLEnvironment.variant_role).where(RLEnvironment.research_project_id == project.id)
+        )
+        roles_present = {r[0] for r in env_meta_res.fetchall() if r[0]}
+        has_ablation = len(roles_present) >= 2
+
+        ablation_instruction = (
+            "\n\n**ABLATION COMPARISON (REQUIRED):** This study has variant roles "
+            f"{sorted(roles_present)}. You MUST explicitly compare the *baseline* vs "
+            "*treatment* (and control if present) per algorithm: report the absolute and "
+            "relative difference in mean reward, success rate, and convergence speed, then "
+            "state whether the hypothesis-applied variant outperforms its baseline and by "
+            "how much. Quote concrete numbers from the table."
+            if has_ablation else ""
+        )
 
         prompt = (
             f"You are analyzing REAL experimental results from actual RL training runs.\n\n"
-            f"**Original Research Plan:**\n{research_history[:3000]}\n\n"
+            f"**Original Hypothesis:**\n{research_history[:3000]}\n\n"
             f"**Training Results:**\n{results_text}\n\n"
+            f"**Aggregated Results Table (mean±std across seeds, grouped by variant):**\n"
+            f"{ablation_table or '(no aggregated table available)'}\n\n"
             f"**Training Curve Progression:**\n{curve_ctx}\n\n"
             f"Provide a thorough analysis:\n"
             f"1. **Key Findings** — What do the results show?\n"
@@ -734,7 +935,8 @@ class LabService:
             f"3. **Hypothesis Evaluation** — Was the hypothesis supported, refuted, or inconclusive?\n"
             f"4. **Convergence Analysis** — How quickly did each algorithm learn? Learning dynamics?\n"
             f"5. **Strengths & Limitations** — What worked and what didn't?\n"
-            f"6. **Conclusions** — Key takeaways for the research community\n\n"
+            f"6. **Conclusions** — Key takeaways for the research community"
+            f"{ablation_instruction}\n\n"
             f"Be rigorous and specific. These are real results from actual training, not simulations."
         )
 
@@ -746,34 +948,94 @@ class LabService:
     # ── Phase 5: Write ───────────────────────────────────────────
 
     async def _build_results_table(self, db: AsyncSession, project_id: int) -> str:
-        """Build a formatted results table from real training data."""
-        env_ids_result = await db.execute(
-            select(RLEnvironment.id, RLEnvironment.name).where(RLEnvironment.research_project_id == project_id)
+        """Build a formatted results table from real training data.
+
+        When multiple seeds exist for the same (env, algo) cell the rows are
+        collapsed into mean±std across seeds, which is the standard way to
+        report ablation results in an RL paper.
+        """
+        env_rows = await db.execute(
+            select(RLEnvironment.id, RLEnvironment.name, RLEnvironment.variant_role, RLEnvironment.variant_label)
+            .where(RLEnvironment.research_project_id == project_id)
         )
-        env_map = {r[0]: r[1] for r in env_ids_result.fetchall()}
-        if not env_map:
+        env_meta = {
+            r[0]: {"name": r[1], "variant_role": r[2], "variant_label": r[3]}
+            for r in env_rows.fetchall()
+        }
+        if not env_meta:
             return ""
 
         runs_result = await db.execute(
-            select(TrainingRun).where(TrainingRun.env_id.in_(list(env_map.keys())), TrainingRun.status == "completed")
-            .order_by(TrainingRun.created_at)
+            select(TrainingRun).where(
+                TrainingRun.env_id.in_(list(env_meta.keys())),
+                TrainingRun.status == "completed",
+            ).order_by(TrainingRun.created_at)
         )
         runs = runs_result.scalars().all()
         if not runs:
             return ""
 
-        lines = ["| Environment | Algorithm | Mean Reward | Std Reward | Success Rate | Episodes | Training Time |",
-                 "|---|---|---|---|---|---|---|"]
+        # Group runs by (env_id, algorithm) and aggregate across seeds.
+        from collections import defaultdict
+        import math
+        cells: dict = defaultdict(list)
         for run in runs:
             res = json.loads(run.results_json) if run.results_json else {}
-            env_name = env_map.get(run.env_id, f"Env {run.env_id}")
-            mr = res.get("mean_reward", "N/A")
-            sr = res.get("std_reward", "N/A")
-            success = res.get("success_rate")
-            success_str = f"{success*100:.1f}%" if success is not None else "N/A"
-            episodes = res.get("episodes_trained", "N/A")
-            time_s = res.get("training_time_sec", "N/A")
-            lines.append(f"| {env_name} | {run.algorithm} | {mr} | {sr} | {success_str} | {episodes} | {time_s}s |")
+            cells[(run.env_id, run.algorithm)].append(res)
+
+        def _mean(xs):
+            xs = [x for x in xs if isinstance(x, (int, float))]
+            return sum(xs) / len(xs) if xs else None
+
+        def _std(xs):
+            xs = [x for x in xs if isinstance(x, (int, float))]
+            if len(xs) < 2:
+                return None
+            m = sum(xs) / len(xs)
+            return math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1))
+
+        def _fmt(val, digits=3):
+            if val is None:
+                return "N/A"
+            return f"{val:.{digits}f}"
+
+        lines = [
+            "| Variant | Environment | Algorithm | Seeds | Mean Reward ± Std | Success Rate | Train Time (s) |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        # Sort: baseline first, then treatment, then control, then misc; group by env.
+        role_order = {"baseline": 0, "control": 1, "treatment": 2}
+
+        def _sort_key(item):
+            (env_id, algo), _ = item
+            meta = env_meta.get(env_id, {})
+            role = (meta.get("variant_role") or "zzz").lower()
+            return (role_order.get(role, 99), meta.get("name", ""), algo)
+
+        for (env_id, algo), results in sorted(cells.items(), key=_sort_key):
+            meta = env_meta.get(env_id, {})
+            env_name = meta.get("name") or f"Env {env_id}"
+            role = meta.get("variant_role") or "—"
+            label = meta.get("variant_label") or "—"
+            variant_cell = f"{role}" + (f" ({label})" if label and label != "—" else "")
+
+            mrs = [r.get("mean_reward") for r in results]
+            srs = [r.get("success_rate") for r in results]
+            times = [r.get("training_time_sec") for r in results]
+
+            mean_r = _mean(mrs)
+            std_r = _std(mrs) if len(mrs) > 1 else _mean([r.get("std_reward") for r in results])
+            reward_cell = (
+                f"{_fmt(mean_r)} ± {_fmt(std_r)}" if mean_r is not None else "N/A"
+            )
+            success_cell = (
+                f"{_mean(srs) * 100:.1f}%" if _mean(srs) is not None else "N/A"
+            )
+            time_cell = _fmt(_mean(times), 1) if _mean(times) is not None else "N/A"
+            lines.append(
+                f"| {variant_cell} | {env_name} | {algo} | {len(results)} | "
+                f"{reward_cell} | {success_cell} | {time_cell} |"
+            )
 
         return "\n".join(lines)
 
@@ -816,8 +1078,30 @@ class LabService:
         return "\n".join(descs) if descs else "No curve data available."
 
     async def _run_write(self, db: AsyncSession, project: ResearchProject):
-        logger.info(f"[Lab] WRITE phase for project {project.id}")
+        logger.info(f"[Lab] WRITE phase — literature search + paper drafting for project {project.id}")
 
+        # ── Step 1: Search ArXiv for supporting references ────────
+        await self._save_message(
+            db, project.id, "sage",
+            "Searching ArXiv for related literature to support our findings...",
+            "write",
+        )
+        try:
+            ref_count_res = await db.execute(
+                select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project.id)
+            )
+            current_refs = ref_count_res.scalar() or 0
+            if current_refs < 10:
+                logger.info(f"[Lab] Write phase: {current_refs} refs, searching ArXiv...")
+                await self._search_and_import_topic_papers(db, project, min_papers=max(10, 15 - current_refs))
+                new_count_res = await db.execute(
+                    select(func.count(ProjectReference.id)).where(ProjectReference.project_id == project.id)
+                )
+                logger.info(f"[Lab] Write phase: now {new_count_res.scalar() or 0} refs after search")
+        except Exception as e:
+            logger.warning(f"[Lab] ArXiv search failed in write phase: {e}")
+
+        # ── Step 2: Gather all context ────────────────────────────
         works_result = await db.execute(
             select(AgentWork).where(AgentWork.project_id == project.id).order_by(AgentWork.created_at)
         )
@@ -860,57 +1144,82 @@ class LabService:
             ref_summaries.append(f"[{i}] {art.title}: {summary}")
         ref_ctx = "\n\n".join(ref_summaries)
 
+        topic = project.topic or project.title
+        description = project.description or ""
+
+        hypothesis_work = None
+        for w in all_works:
+            if w.work_type == "hypothesis":
+                hypothesis_work = w
+                break
+
+        hypothesis_ctx = ""
+        if hypothesis_work:
+            hypothesis_ctx = hypothesis_work.content[:5000]
+        elif project.selected_idea:
+            hypothesis_ctx = project.selected_idea[:5000]
+
+        # ── Step 3: Write paper with hypothesis as central thread ─
         prompt = (
             f"Write a COMPLETE, DETAILED research paper in formal academic style, suitable for submission "
-            f"to a top ML venue (NeurIPS, ICML, ICLR). This paper is based on REAL experiments with actual "
-            f"training data from RL environments we built and tested.\n\n"
-            f"**Research Topic:** {project.topic or project.title}\n\n"
-            f"**All Research Work:**\n{works_text}\n\n"
+            f"to a top ML venue (NeurIPS, ICML, ICLR).\n\n"
+            f"{'=' * 60}\n"
+            f"CORE RESEARCH IDEA (this is the CENTRAL THREAD of the entire paper):\n"
+            f"Topic: \"{topic}\"\n"
+            f"{f'Description: {description}' if description else ''}\n"
+            f"{'=' * 60}\n\n"
+            f"**Our Original Hypothesis:**\n{hypothesis_ctx}\n\n"
+            f"This paper is based on REAL experiments. We built actual RL environments and trained real agents.\n\n"
             f"**Environment Specifications:**\n{env_ctx}\n\n"
             f"**Experimental Results Table:**\n{results_table}\n\n"
             f"**Training Curve Analysis:**\n{curve_desc}\n\n"
-            f"**Reference Papers (use [N] citation format):**\n{ref_ctx}\n\n"
+            f"**Related Literature (use as SUPPORTING references, not as the basis of the paper):**\n{ref_ctx}\n\n"
             f"**Bibliography entries:**\n{bib_text}\n\n"
-            f"PAPER STRUCTURE (write ALL sections in full, each section should be substantial):\n\n"
-            f"# [Paper Title]\n\n"
+            f"CRITICAL FRAMING INSTRUCTION:\n"
+            f"The paper's narrative must flow from OUR ORIGINAL HYPOTHESIS, not from the literature. "
+            f"The structure is: We had this idea → we designed experiments to test it → here are our results → "
+            f"literature supports/contrasts our findings. The ArXiv references are SUPPORTING citations, "
+            f"NOT the foundation of the paper. Our contribution is ORIGINAL.\n\n"
+            f"PAPER STRUCTURE:\n\n"
+            f"# [Paper Title — directly reflecting our hypothesis about \"{topic}\"]\n\n"
             f"## Abstract\n"
-            f"Write 200-300 words. State the problem, approach, key results with numbers, and conclusion.\n\n"
+            f"200-300 words. State OUR hypothesis, OUR approach, OUR key results with numbers.\n\n"
             f"## 1. Introduction\n"
-            f"Motivation, problem statement, contributions (as a bulleted list), paper organization. "
-            f"Cite relevant references using [N] format. Minimum 400 words.\n\n"
+            f"Start with the problem WE identified. State OUR motivation and OUR hypothesis. "
+            f"List OUR contributions. Reference related work only to establish context. Min 400 words.\n\n"
             f"## 2. Related Work\n"
-            f"Discuss at least 5 reference papers by [N] citation. Compare and contrast with our approach. "
-            f"Minimum 300 words.\n\n"
+            f"Position OUR work relative to existing literature. Use [N] citations. "
+            f"Emphasize what existing work does NOT address that WE do. Min 300 words.\n\n"
             f"## 3. Methodology\n"
             f"### 3.1 Environment Design\n"
-            f"Describe each environment in detail: state space, action space, transition dynamics, reward function. "
-            f"Include the mathematical formulation where relevant.\n"
-            f"### 3.2 Algorithm Selection\n"
-            f"Justify why specific algorithms were chosen. Describe key hyperparameters.\n\n"
+            f"Describe each environment in detail — state space, action space, transition dynamics, "
+            f"reward function. Explain how each design choice directly tests our hypothesis.\n"
+            f"### 3.2 Agent Architecture\n"
+            f"If the hypothesis involves agent-side mechanisms (self-observation, experience storage, etc.), "
+            f"describe how they are implemented in the observation space and reward structure.\n"
+            f"### 3.3 Algorithm Selection\n"
+            f"Justify algorithm choices in context of the hypothesis.\n\n"
             f"## 4. Experimental Setup\n"
-            f"Hardware/software, training configuration, evaluation protocol, metrics definition. "
-            f"Reproducibility details.\n\n"
+            f"Training configuration, evaluation protocol, metrics.\n\n"
             f"## 5. Results\n"
-            f"### 5.1 Quantitative Results\n"
-            f"Present the EXACT results table from our experiments:\n{results_table}\n\n"
-            f"Discuss each result. Which algorithm performed best and why?\n"
-            f"### 5.2 Learning Dynamics\n"
-            f"Describe the training curves: {curve_desc}\n"
-            f"Discuss convergence speed, stability, and any interesting patterns.\n\n"
+            f"### 5.1 Quantitative Results\n{results_table}\n\n"
+            f"Discuss each result IN RELATION TO THE HYPOTHESIS. Which sub-hypotheses are supported?\n"
+            f"### 5.2 Learning Dynamics\n{curve_desc}\n"
+            f"What do the curves tell us about our hypothesis?\n\n"
             f"## 6. Discussion\n"
-            f"Key findings, implications, comparison with prior work, limitations, threats to validity.\n\n"
+            f"Key findings relative to hypothesis. Implications. Comparison with prior work. "
+            f"Limitations and threats to validity.\n\n"
             f"## 7. Conclusion\n"
-            f"Summary of contributions, main takeaways, future work directions.\n\n"
-            f"## References\n"
-            f"List ALL references in [N] format.\n\n"
+            f"Which hypotheses confirmed/rejected? Main takeaways. Future work.\n\n"
+            f"## References\n\n"
             f"CRITICAL INSTRUCTIONS:\n"
-            f"- Write the COMPLETE paper. Do NOT truncate, abbreviate, or summarize any section.\n"
-            f"- Use formal academic English throughout.\n"
-            f"- Include the EXACT numbers from our experimental results.\n"
-            f"- Use [N] citation format and cite at least 5 references.\n"
-            f"- Every section must be substantive — multiple paragraphs, not just a few sentences.\n"
-            f"- Do NOT impose any word limit on yourself. Write as much as needed for a thorough paper.\n"
-            f"- Use markdown formatting with ## for sections and ### for subsections."
+            f"- The ENTIRE paper revolves around OUR hypothesis about \"{topic}\"\n"
+            f"- Every section must connect back to the hypothesis\n"
+            f"- Use EXACT numbers from experimental results\n"
+            f"- Use [N] citation format, cite at least 5 references\n"
+            f"- Write the COMPLETE paper, do NOT truncate any section\n"
+            f"- Formal academic English throughout\n"
+            f"- Use markdown ## for sections, ### for subsections"
         )
 
         paper_content = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
@@ -958,6 +1267,22 @@ class LabService:
         )
         db.add(paper)
         await db.commit()
+
+        # Email notification: paper ready
+        try:
+            from app.services.email_service import email_service
+            if project.user_id:
+                user_obj = (await db.execute(
+                    select(User).where(User.id == project.user_id)
+                )).scalar_one_or_none()
+                if user_obj and user_obj.email and user_obj.email_notifications:
+                    await email_service.send_transactional(
+                        to=user_obj.email, template="paper_ready",
+                        data={"title": title, "project_id": project.id},
+                        user_id=user_obj.id,
+                    )
+        except Exception:
+            pass
 
     # ── Phase 6: Review ──────────────────────────────────────────
 
@@ -1008,17 +1333,31 @@ class LabService:
     # ── Public API ───────────────────────────────────────────────
 
     async def create_project(self, db: AsyncSession, title: str, description: Optional[str] = None,
-                             topic: Optional[str] = None, user_id: Optional[int] = None) -> ResearchProject:
-        project = ResearchProject(title=title, description=description, topic=topic, user_id=user_id)
+                             topic: Optional[str] = None, user_id: Optional[int] = None,
+                             experiment_config_json: Optional[str] = None) -> ResearchProject:
+        project = ResearchProject(
+            title=title, description=description, topic=topic, user_id=user_id,
+            experiment_config_json=experiment_config_json,
+        )
         db.add(project)
         await db.commit()
         await db.refresh(project)
-        logger.info(f"[Lab] Created project: {title} (id={project.id})")
-
-        if topic:
-            await self._search_and_import_topic_papers(db, project, min_papers=10)
-
+        logger.info(
+            "[Lab] Created project: %s (id=%d, advanced_settings=%s)",
+            title, project.id, bool(experiment_config_json),
+        )
         return project
+
+    def _load_experiment_config(self, project: ResearchProject) -> Optional[dict]:
+        """Return the validated experiment_config dict for a project, or None."""
+        raw = getattr(project, "experiment_config_json", None)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("[Lab] project %d has malformed experiment_config_json", project.id)
+            return None
 
     async def run_next_phase(self, db: AsyncSession, project_id: int) -> dict:
         result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
@@ -1034,12 +1373,13 @@ class LabService:
         logger.info(f"[Lab] Running phase: {phase} for project {project.id}")
 
         runners = {
-            "research": self._run_research,
+            "hypothesis": self._run_hypothesis,
             "design": self._run_design,
             "experiment": self._run_experiment,
             "analyze": self._run_analyze,
             "write": self._run_write,
             "review": self._run_review,
+            "research": self._run_hypothesis,
         }
 
         runner = runners.get(phase)
@@ -1064,8 +1404,9 @@ class LabService:
                 pass
             return {"error": str(e), "phase": phase}
 
-        if project.status != "completed" and phase in PHASES:
-            idx = PHASES.index(phase)
+        effective_phase = "hypothesis" if phase == "research" else phase
+        if project.status != "completed" and effective_phase in PHASES:
+            idx = PHASES.index(effective_phase)
             if idx + 1 < len(PHASES):
                 project.current_phase = PHASES[idx + 1]
             else:
@@ -1075,11 +1416,92 @@ class LabService:
         project.updated_at = datetime.utcnow()
         await db.commit()
 
+        # Email notification: research complete
+        if project.status == "completed" and project.user_id:
+            try:
+                from app.services.email_service import email_service
+                user_obj = (await db.execute(
+                    select(User).where(User.id == project.user_id)
+                )).scalar_one_or_none()
+                if user_obj and user_obj.email and user_obj.email_notifications:
+                    await email_service.send_transactional(
+                        to=user_obj.email, template="research_complete",
+                        data={"title": project.title, "project_id": project.id},
+                        user_id=user_obj.id,
+                    )
+            except Exception:
+                pass
+
         return {
             "phase_completed": phase,
             "next_phase": project.current_phase,
             "status": project.status,
         }
+
+    async def replay_phase(self, db: AsyncSession, project_id: int, phase: str) -> dict:
+        """Re-run a specific completed phase without advancing the project."""
+        if phase not in PHASES:
+            return {"error": f"Unknown phase: {phase}"}
+
+        result = await db.execute(select(ResearchProject).where(ResearchProject.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            return {"error": "Project not found"}
+        if getattr(project, "phase_running", False):
+            return {"error": "A phase is already running"}
+
+        effective_replay = "hypothesis" if phase == "research" else phase
+        effective_current = "hypothesis" if project.current_phase == "research" else project.current_phase
+        current_idx = PHASES.index(effective_current) if effective_current in PHASES else len(PHASES)
+        replay_idx = PHASES.index(effective_replay) if effective_replay in PHASES else 0
+        is_completed = project.status == "completed"
+
+        if not is_completed and replay_idx >= current_idx:
+            return {"error": f"Phase '{phase}' has not been completed yet"}
+
+        runners = {
+            "hypothesis": self._run_hypothesis,
+            "design": self._run_design,
+            "experiment": self._run_experiment,
+            "analyze": self._run_analyze,
+            "write": self._run_write,
+            "review": self._run_review,
+            "research": self._run_hypothesis,
+        }
+        runner = runners.get(phase)
+        if not runner:
+            return {"error": f"No runner for phase: {phase}"}
+
+        logger.info(f"[Lab] REPLAY phase '{phase}' for project {project.id}")
+
+        try:
+            project.phase_running = True
+            await db.commit()
+        except Exception:
+            pass
+
+        saved_phase = project.current_phase
+        saved_status = project.status
+
+        try:
+            await runner(db, project)
+        except Exception as e:
+            logger.exception(f"[Lab] Replay of phase '{phase}' failed for project {project.id}")
+            try:
+                project.phase_running = False
+                await self._save_message(db, project.id, "sage", f"Replay of {phase} failed: {str(e)[:500]}", phase)
+                await db.commit()
+            except Exception:
+                pass
+            return {"error": str(e), "phase": phase}
+
+        project.current_phase = saved_phase
+        project.status = saved_status
+        project.phase_running = False
+        project.updated_at = datetime.utcnow()
+        await db.commit()
+
+        return {"phase_replayed": phase, "current_phase": project.current_phase, "status": project.status}
 
     async def run_all_phases(self, db: AsyncSession, project_id: int) -> dict:
         results = []
