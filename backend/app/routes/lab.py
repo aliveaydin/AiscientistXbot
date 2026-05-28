@@ -386,6 +386,65 @@ async def paper_from_env(
     return {"project_id": project_id, "title": title, "status": "started"}
 
 
+def _split_paper_sections(md_text: str) -> dict:
+    """Split a generated markdown paper into RLC structural parts.
+
+    Returns a dict with: title, summary (md), contributions (md), abstract (md),
+    body (md from Introduction through References + Appendix, excluding the cover-page
+    Summary/Contributions and the Abstract heading which is rendered separately).
+    """
+    lines = (md_text or "").split("\n")
+    title = ""
+    sections: list[tuple[str, list[str]]] = []  # (heading_text_lower, lines)
+    pre_lines: list[str] = []
+    current_key = None
+    current_lines: list[str] = []
+
+    def flush():
+        if current_key is not None:
+            sections.append((current_key, current_lines))
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("# ") and not stripped.startswith("## ") and not title:
+            title = stripped.lstrip("#").strip()
+            continue
+        if stripped.startswith("## "):
+            flush()
+            current_key = stripped.lstrip("#").strip().lower()
+            current_lines = []
+            continue
+        if current_key is None:
+            pre_lines.append(line)
+        else:
+            current_lines.append(line)
+    flush()
+
+    summary, contributions, abstract = "", "", ""
+    body_parts: list[str] = []
+    for key, sec_lines in sections:
+        content = "\n".join(sec_lines).strip()
+        if key == "summary":
+            summary = content
+        elif key == "contributions":
+            contributions = content
+        elif key == "abstract":
+            abstract = content
+        else:
+            # Re-emit the heading for the body
+            body_parts.append(f"## {key.title() if key.islower() else key}".rstrip())
+            # Preserve original heading casing where possible by reusing sec content only
+            body_parts.append(content)
+    body = "\n\n".join(p for p in body_parts if p.strip())
+    return {
+        "title": title,
+        "summary": summary,
+        "contributions": contributions,
+        "abstract": abstract,
+        "body": body,
+    }
+
+
 @router.get("/projects/{project_id}/paper/download")
 async def download_paper(project_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -397,36 +456,68 @@ async def download_paper(project_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="No paper found")
 
     import markdown as md
-    paper_html = md.markdown(paper.content or "", extensions=["tables", "fenced_code"])
+
+    parts = _split_paper_sections(paper.content or "")
+    title = parts["title"] or paper.title
+
+    # Abstract: prefer the stored field, fall back to the parsed section.
+    abstract_md = (paper.abstract or "").strip() or parts["abstract"]
+    abstract_html = md.markdown(abstract_md, extensions=["tables", "fenced_code"]) if abstract_md else ""
+
+    summary_html = md.markdown(parts["summary"], extensions=["tables", "fenced_code"]) if parts["summary"] else ""
+    contributions_html = md.markdown(parts["contributions"], extensions=["tables", "fenced_code"]) if parts["contributions"] else ""
+
+    # Body = everything except cover-page Summary/Contributions and the Abstract heading.
+    body_md = parts["body"] or (paper.content or "")
+    paper_html = md.markdown(body_md, extensions=["tables", "fenced_code"])
 
     figures = await _generate_inline_figures(db, project_id)
-
     paper_html = _inject_figures_into_paper(paper_html, figures)
+
+    # Optional RLC-style cover page (Summary + Contributions).
+    cover_html = ""
+    if summary_html or contributions_html:
+        cover_html = f"""
+<div class="cover-page">
+  <p class="venue-note">Under review for RLC 2026, to be published in RLJ 2026 &middot; Cover Page</p>
+  <h1 class="cover-title">{title}</h1>
+  <p class="cover-authors">Anonymous authors &middot; Paper under double-blind review</p>
+  {f'<h2 class="cover-h">Summary</h2>{summary_html}' if summary_html else ''}
+  {f'<h2 class="cover-h">Contributions</h2>{contributions_html}' if contributions_html else ''}
+</div>
+"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>{paper.title}</title>
+<title>{title}</title>
 <style>
-@page {{ margin: 2.5cm; size: A4; }}
-body {{ font-family: 'Times New Roman', 'Noto Serif', Georgia, serif; font-size: 11pt;
-  line-height: 1.6; color: #111; max-width: 800px; margin: 0 auto; padding: 40px 20px; }}
-h1 {{ font-size: 18pt; text-align: center; margin: 0 0 10px; line-height: 1.3; }}
-h2 {{ font-size: 14pt; margin-top: 24pt; border-bottom: 1px solid #ccc; padding-bottom: 4pt; }}
-h3 {{ font-size: 12pt; margin-top: 18pt; }}
-p {{ text-align: justify; margin: 6pt 0; }}
-table {{ border-collapse: collapse; width: 100%; margin: 12pt 0; font-size: 10pt; }}
-th, td {{ border: 1px solid #666; padding: 6px 10px; text-align: left; }}
+@page {{ margin: 1in; size: letter; }}
+body {{ font-family: 'Times New Roman', 'Noto Serif', Georgia, serif; font-size: 10pt;
+  line-height: 1.32; color: #000; max-width: 6.5in; margin: 0 auto; padding: 40px 20px; }}
+h1 {{ font-size: 14pt; text-align: center; margin: 0 0 6px; line-height: 1.25; font-weight: bold; }}
+h2 {{ font-size: 12pt; margin-top: 16pt; margin-bottom: 6pt; font-weight: bold; }}
+h3 {{ font-size: 10.5pt; margin-top: 12pt; margin-bottom: 4pt; font-weight: bold; }}
+p {{ text-align: justify; margin: 5pt 0; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10pt 0; font-size: 9pt; }}
+th, td {{ border: 1px solid #666; padding: 4px 8px; text-align: left; }}
 th {{ background: #f0f0f0; font-weight: bold; }}
 tr:nth-child(even) {{ background: #fafafa; }}
-.abstract {{ font-style: italic; margin: 16pt 20pt; padding: 12pt; background: #f9f9f9;
-  border-left: 3px solid #666; }}
-.figure {{ margin: 16pt 0; page-break-inside: avoid; }}
+ol {{ padding-left: 1.4em; }}
+ol li {{ margin: 4pt 0; }}
+.venue-note {{ text-align: center; font-size: 9pt; color: #333; margin: 0 0 18pt; }}
+.cover-page {{ page-break-after: always; }}
+.cover-title {{ margin-top: 6pt; }}
+.cover-authors {{ text-align: center; font-size: 9.5pt; color: #333; margin: 4pt 0 20pt; }}
+.cover-h {{ text-align: left; font-size: 12pt; }}
+.abstract {{ margin: 14pt 0.5in; padding: 0; font-size: 9.5pt; line-height: 1.3; }}
+.abstract .abstract-label {{ text-align: center; font-weight: bold; font-size: 12pt; display: block; margin-bottom: 6pt; }}
+.figure {{ margin: 14pt 0; page-break-inside: avoid; }}
 .figure img {{ max-width: 100%; height: auto; display: block; margin: 0 auto; }}
-.figure-caption {{ text-align: center; font-size: 9pt; color: #555; margin-top: 4pt; font-style: italic; }}
-.data-table {{ margin: 12pt 0; }}
-.data-table caption {{ font-size: 9pt; color: #555; text-align: left; margin-bottom: 4pt; font-style: italic; }}
+.figure-caption {{ text-align: center; font-size: 9pt; color: #333; margin-top: 4pt; }}
+.data-table {{ margin: 10pt 0; }}
+.data-table caption {{ font-size: 9pt; color: #333; text-align: left; margin-bottom: 4pt; }}
 code {{ font-family: 'Courier New', monospace; font-size: 9pt; background: #f5f5f5; padding: 1px 4px; }}
 pre {{ background: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: auto; font-size: 9pt; }}
 @media print {{
@@ -442,17 +533,17 @@ pre {{ background: #f5f5f5; padding: 10px; border: 1px solid #ddd; overflow-x: a
 </head>
 <body>
 <button class="print-btn no-print" onclick="window.print()">Download as PDF (Ctrl+P)</button>
-<h1>{paper.title}</h1>
-<p style="text-align:center; color:#666; font-size:10pt;">
-  Generated by Kualia AI Research Lab | {datetime.utcnow().strftime('%B %d, %Y')}
-</p>
-{f'<div class="abstract"><strong>Abstract.</strong> {paper.abstract}</div>' if paper.abstract else ''}
+{cover_html}
+<p class="venue-note">Under review for RLC 2026, to be published in RLJ 2026</p>
+<h1>{title}</h1>
+<p class="cover-authors">Anonymous authors &middot; Paper under double-blind review</p>
+{f'<div class="abstract"><span class="abstract-label">Abstract</span>{abstract_html}</div>' if abstract_html else ''}
 {paper_html}
 </body>
 </html>"""
 
     return HTMLResponse(content=html, headers={
-        "Content-Disposition": f'inline; filename="{paper.title[:60].replace(chr(34), "")}.html"'
+        "Content-Disposition": f'inline; filename="{title[:60].replace(chr(34), "")}.html"'
     })
 
 

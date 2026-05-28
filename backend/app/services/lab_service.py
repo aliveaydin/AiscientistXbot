@@ -1161,8 +1161,9 @@ class LabService:
 
         # ── Step 3: Write paper with hypothesis as central thread ─
         prompt = (
-            f"Write a COMPLETE, DETAILED research paper in formal academic style, suitable for submission "
-            f"to a top ML venue (NeurIPS, ICML, ICLR).\n\n"
+            f"Write a COMPLETE research paper formatted for submission to the "
+            f"**Reinforcement Learning Conference (RLC 2026 / RLJ 2026)**, following the official RLC/RLJ "
+            f"submission format described below.\n\n"
             f"{'=' * 60}\n"
             f"CORE RESEARCH IDEA (this is the CENTRAL THREAD of the entire paper):\n"
             f"Topic: \"{topic}\"\n"
@@ -1180,46 +1181,81 @@ class LabService:
             f"The structure is: We had this idea → we designed experiments to test it → here are our results → "
             f"literature supports/contrasts our findings. The ArXiv references are SUPPORTING citations, "
             f"NOT the foundation of the paper. Our contribution is ORIGINAL.\n\n"
-            f"PAPER STRUCTURE:\n\n"
+            f"{'=' * 60}\n"
+            f"RLC 2026 FORMAT & LENGTH RULES (MUST FOLLOW EXACTLY):\n"
+            f"- The MAIN TEXT must be **6–8 content pages** (≈ 4,000–5,500 words). References and appendices "
+            f"do NOT count toward this limit. Do NOT pad; be concise and precise like a real RLC paper.\n"
+            f"- A COVER PAGE precedes the paper: it contains a Summary and a Contributions list (see below).\n"
+            f"- Appendices are PERMITTED, come AFTER the references, and are NOT counted toward the page limit. "
+            f"Place supporting detail (extra tables, derivations, hyperparameter grids, additional plots) there.\n"
+            f"- Use author–year citation style consistent with natbib (e.g., '(Sutton & Barto, 1998)' for "
+            f"parenthetical, 'Sutton & Barto (1998)' when the authors are part of the sentence). "
+            f"Cite at least 5 of the provided references.\n"
+            f"- Figures: caption goes AFTER the figure, lowercase except first word/proper nouns, numbered consecutively. "
+            f"Tables: caption goes BEFORE the table. Always reference figures/tables in the text before they appear.\n\n"
+            f"{'=' * 60}\n"
+            f"PAPER STRUCTURE (output in this exact order, using markdown headings):\n\n"
             f"# [Paper Title — directly reflecting our hypothesis about \"{topic}\"]\n\n"
+            f"## Summary\n"
+            f"COVER PAGE element. One or two short paragraphs (may differ from the abstract) describing the work "
+            f"for the cover page. This is NOT counted toward the page limit.\n\n"
+            f"## Contributions\n"
+            f"COVER PAGE element. A succinct, precise NUMBERED list of the paper's contributions. "
+            f"For each contribution, add a 'Context:' note on the next line situating it relative to prior work "
+            f"(write 'Context: None' if there is no additional context). Keep each contribution to roughly one "
+            f"sentence. Submissions are judged mostly on these claims, so scope them carefully and do NOT overclaim. "
+            f"Every major contribution claimed here must also appear in the main text.\n\n"
             f"## Abstract\n"
-            f"200-300 words. State OUR hypothesis, OUR approach, OUR key results with numbers.\n\n"
-            f"## 1. Introduction\n"
+            f"A SINGLE paragraph (150–250 words). State OUR hypothesis, OUR approach, and OUR key results with numbers.\n\n"
+            f"## 1 Introduction\n"
             f"Start with the problem WE identified. State OUR motivation and OUR hypothesis. "
-            f"List OUR contributions. Reference related work only to establish context. Min 400 words.\n\n"
-            f"## 2. Related Work\n"
-            f"Position OUR work relative to existing literature. Use [N] citations. "
-            f"Emphasize what existing work does NOT address that WE do. Min 300 words.\n\n"
-            f"## 3. Methodology\n"
+            f"Briefly list OUR contributions. Reference related work only to establish context. ~500 words.\n\n"
+            f"## 2 Related Work\n"
+            f"Position OUR work relative to existing literature using author–year citations. "
+            f"Emphasize what existing work does NOT address that WE do. ~350 words.\n\n"
+            f"## 3 Methodology\n"
             f"### 3.1 Environment Design\n"
-            f"Describe each environment in detail — state space, action space, transition dynamics, "
-            f"reward function. Explain how each design choice directly tests our hypothesis.\n"
+            f"Describe each environment — state space, action space, transition dynamics, reward function. "
+            f"Explain how each design choice directly tests our hypothesis.\n"
             f"### 3.2 Agent Architecture\n"
             f"If the hypothesis involves agent-side mechanisms (self-observation, experience storage, etc.), "
             f"describe how they are implemented in the observation space and reward structure.\n"
             f"### 3.3 Algorithm Selection\n"
             f"Justify algorithm choices in context of the hypothesis.\n\n"
-            f"## 4. Experimental Setup\n"
-            f"Training configuration, evaluation protocol, metrics.\n\n"
-            f"## 5. Results\n"
+            f"## 4 Experimental Setup\n"
+            f"Training configuration, evaluation protocol, metrics. Move long hyperparameter grids to the appendix.\n\n"
+            f"## 5 Results\n"
             f"### 5.1 Quantitative Results\n{results_table}\n\n"
             f"Discuss each result IN RELATION TO THE HYPOTHESIS. Which sub-hypotheses are supported?\n"
             f"### 5.2 Learning Dynamics\n{curve_desc}\n"
             f"What do the curves tell us about our hypothesis?\n\n"
-            f"## 6. Discussion\n"
+            f"## 6 Discussion\n"
             f"Key findings relative to hypothesis. Implications. Comparison with prior work. "
             f"Limitations and threats to validity.\n\n"
-            f"## 7. Conclusion\n"
+            f"## 7 Conclusion\n"
             f"Which hypotheses confirmed/rejected? Main takeaways. Future work.\n\n"
-            f"## References\n\n"
+            f"## Broader Impact Statement\n"
+            f"OPTIONAL short section discussing potential repercussions / negative impacts a user of this research "
+            f"should be aware of. Keep it to a short paragraph; omit only if genuinely not applicable.\n\n"
+            f"## References\n"
+            f"List the cited references in alphabetical order by first author. These do NOT count toward the page limit.\n\n"
+            f"## Appendix\n"
+            f"### A Implementation & Hyperparameter Details\n"
+            f"Full training configuration, hyperparameter tables, and reproducibility details.\n"
+            f"### B Additional Results\n"
+            f"Extra plots, per-environment breakdowns, or derivations that support but are not central to the main claims. "
+            f"Appendices are NOT counted toward the 6–8 page limit.\n\n"
+            f"{'=' * 60}\n"
             f"CRITICAL INSTRUCTIONS:\n"
-            f"- The ENTIRE paper revolves around OUR hypothesis about \"{topic}\"\n"
-            f"- Every section must connect back to the hypothesis\n"
-            f"- Use EXACT numbers from experimental results\n"
-            f"- Use [N] citation format, cite at least 5 references\n"
-            f"- Write the COMPLETE paper, do NOT truncate any section\n"
-            f"- Formal academic English throughout\n"
-            f"- Use markdown ## for sections, ### for subsections"
+            f"- The ENTIRE paper revolves around OUR hypothesis about \"{topic}\"; every section connects back to it.\n"
+            f"- Keep the MAIN TEXT (Introduction through Conclusion) within 6–8 pages worth of content. "
+            f"Push detail to the appendix rather than bloating the main text.\n"
+            f"- Use EXACT numbers from the experimental results.\n"
+            f"- Use author–year citations and cite at least 5 references.\n"
+            f"- Write the COMPLETE paper, do NOT truncate any section.\n"
+            f"- Formal academic English throughout.\n"
+            f"- Use markdown # for the title, ## for sections (Summary, Contributions, Abstract, numbered sections, "
+            f"Broader Impact Statement, References, Appendix), and ### for subsections."
         )
 
         paper_content = await self._call_agent("sage", AGENTS["sage"]["system_prompt"], prompt)
@@ -1239,26 +1275,28 @@ class LabService:
         title = project.title
         for line in lines[:10]:
             clean = line.replace("#", "").strip()
-            if clean and len(clean) > 10 and not clean.lower().startswith("abstract"):
+            low = clean.lower()
+            if clean and len(clean) > 10 and low not in ("summary", "contributions", "abstract") \
+                    and not low.startswith(("summary", "contributions", "abstract")):
                 title = clean
                 break
 
+        # Extract the Abstract paragraph specifically from the "## Abstract" heading,
+        # so that the cover-page Summary/Contributions (which precede it) are not mistaken for it.
         abstract = ""
-        lower = paper_content.lower()
-        if "abstract" in lower:
-            idx = lower.index("abstract")
-            chunk = paper_content[idx:idx+3000]
-            abs_lines = []
-            started = False
-            for line in chunk.split("\n"):
-                if "abstract" in line.lower() and not started:
-                    started = True
-                    continue
-                if started:
-                    if line.startswith("## ") or line.startswith("# 1") or line.startswith("**1."):
-                        break
-                    abs_lines.append(line)
-            abstract = "\n".join(abs_lines).strip()
+        abs_started = False
+        abs_lines = []
+        for line in lines:
+            stripped = line.strip()
+            heading = stripped.lstrip("#").strip().lower()
+            if not abs_started:
+                if stripped.startswith("#") and heading == "abstract":
+                    abs_started = True
+                continue
+            if stripped.startswith("#"):
+                break
+            abs_lines.append(line)
+        abstract = "\n".join(abs_lines).strip()
 
         paper = ResearchPaper(
             project_id=project.id, title=title,
