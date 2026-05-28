@@ -43,7 +43,7 @@ AGENTS = {
         "name": "Sage",
         "role": "Research Strategist",
         "color": "#f59e0b",
-        "model_preference": "kimi",
+        "model_preference": "opus",
         "system_prompt": (
             "You are Sage, a world-class AI Research Strategist specializing in Reinforcement Learning. "
             "You read academic papers with deep comprehension, identify research gaps, "
@@ -61,7 +61,7 @@ AGENTS = {
         "name": "Atlas",
         "role": "RL Engineer",
         "color": "#3b82f6",
-        "model_preference": "kimi",
+        "model_preference": "opus",
         "system_prompt": (
             "You are Atlas, an expert RL Engineer who builds and trains reinforcement learning systems. "
             "You design Gymnasium-compatible environments, select algorithms (PPO, SAC, DQN), "
@@ -81,23 +81,20 @@ class LabService:
 
     async def _call_agent(self, agent_key: str, system_prompt: str, user_prompt: str, max_tokens: int = 16000, usage_acc=None) -> str:
         from app.services.ai_service import ai_service
+        from app.config import settings as _settings
         acc = usage_acc or _active_usage_acc.get(None)
-        agent = AGENTS[agent_key]
-        pref = agent["model_preference"]
-        if pref == "kimi":
+        # Primary model for all Research Lab agents: Claude Opus 4.8.
+        if _settings.anthropic_api_key:
+            try:
+                return await ai_service._call_claude(system_prompt, user_prompt, model=_settings.anthropic_model, max_tokens=max_tokens, usage_acc=acc)
+            except Exception:
+                pass
+        # Fallbacks (only if Claude is unavailable): Kimi -> OpenAI.
+        if _settings.kimi_api_key:
             try:
                 return await ai_service._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=acc)
             except Exception:
                 pass
-        elif pref == "sonnet":
-            try:
-                return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-6", max_tokens=max_tokens, usage_acc=acc)
-            except Exception:
-                pass
-        try:
-            return await ai_service._call_claude(system_prompt, user_prompt, model="claude-sonnet-4-6", max_tokens=max_tokens, usage_acc=acc)
-        except Exception:
-            pass
         return await ai_service._call_openai(system_prompt, user_prompt, max_tokens=min(max_tokens, 4096), usage_acc=acc)
 
     # ── Data Helpers ─────────────────────────────────────────────

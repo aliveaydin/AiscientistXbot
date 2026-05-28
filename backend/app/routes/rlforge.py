@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, or_
 from app.rate_limit import limiter
 
+from app.config import settings
 from app.database import get_db
 from app.models import (
     RLEnvironment, BuilderConversation, TrainingRun,
@@ -228,7 +229,7 @@ async def generate_env(
         test_results_json=json.dumps(test_results),
         difficulty=difficulty,
         status="draft",
-        ai_model_used="kimi-k2.5",
+        ai_model_used=settings.anthropic_model,
         topic=description,
         generation_log="\n".join(log_lines),
         max_steps=gen.get("env_spec", {}).get("max_episode_steps", 1000),
@@ -1107,7 +1108,7 @@ async def generate_from_paper(
         test_results_json=json.dumps(result.get("test_results", {})),
         difficulty=result.get("env_spec", {}).get("difficulty", "medium"),
         status="draft",
-        ai_model_used="kimi-k2.5",
+        ai_model_used=settings.anthropic_model,
         topic=f"From paper: {file.filename}",
         generation_log=f"Generated from uploaded paper: {file.filename}",
         user_id=paper_user_id,
@@ -1531,14 +1532,15 @@ async def get_suggestions(request: Request, env_id: int, db: AsyncSession = Depe
 
     from app.services.ai_service import ai_service
     try:
-        response = await ai_service._call_kimi(
+        response = await ai_service._call_claude(
             "You are an RL advisor. Return only valid JSON arrays.",
             prompt,
+            model=settings.anthropic_model,
             max_tokens=2000,
         )
     except Exception:
         try:
-            response = await ai_service._call_sonnet(
+            response = await ai_service._call_kimi(
                 "You are an RL advisor. Return only valid JSON arrays.",
                 prompt,
                 max_tokens=2000,

@@ -15,7 +15,7 @@ CRITICAL RULE: You are sharing your OWN thoughts and knowledge. NEVER reference 
 
 Rules:
 - Write in English
-- You have a Premium account. Aim for 400-700 characters. Can go up to 800 when the idea needs room. Write in 2-3 short paragraphs if it helps readability. Do not pad or stretch; if the point is made in 350 chars, stop there.
+- You have a Premium account. Aim for 350-600 characters. NEVER exceed 700 characters. Write in 2-3 short paragraphs if it helps readability. Do not pad or stretch; if the point is made in 350 chars, stop there. ALWAYS finish your sentences. Never leave a thought incomplete.
 - NO emojis. None. Zero. Let the science speak for itself.
 - NO dashes (--), em-dashes, or en-dashes. Use commas, periods, or semicolons instead.
 - Write like a researcher sharing their own thinking, not summarizing someone else's work
@@ -207,19 +207,23 @@ class AIService:
     def _is_kimi_model(self, model: str) -> bool:
         return "kimi" in model.lower()
 
-    async def _call_openai(self, system_prompt: str, user_prompt: str, model: str = "gpt-4", max_tokens: int = 500) -> str:
+    async def _call_openai(self, system_prompt: str, user_prompt: str, model: str = "gpt-4", max_tokens: int = 500, usage_acc=None) -> str:
+        capped = min(max_tokens, 4096)
         response = await self.openai_client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            max_tokens=max_tokens,
+            max_tokens=capped,
             temperature=0.8,
         )
+        if usage_acc and response.usage:
+            usage_acc.add(response.usage.prompt_tokens or 0, response.usage.completion_tokens or 0, model)
         return response.choices[0].message.content.strip()
 
-    async def _call_claude(self, system_prompt: str, user_prompt: str, model: str = "claude-sonnet-4-20250514", max_tokens: int = 500) -> str:
+    async def _call_claude(self, system_prompt: str, user_prompt: str, model: str = None, max_tokens: int = 500, usage_acc=None) -> str:
+        model = model or settings.anthropic_model
         response = await self.anthropic_client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -229,10 +233,15 @@ class AIService:
             ],
             temperature=0.8,
         )
+        if usage_acc and response.usage:
+            usage_acc.add(response.usage.input_tokens or 0, response.usage.output_tokens or 0, model)
         return response.content[0].text.strip()
 
-    async def _call_kimi(self, system_prompt: str, user_prompt: str, max_tokens: int = None) -> str:
-        """Call Kimi K2.5 API (OpenAI-compatible)."""
+    async def _call_kimi(self, system_prompt: str, user_prompt: str, max_tokens: int = None, usage_acc=None) -> str:
+        """Call Kimi K2.5 API (OpenAI-compatible).
+        
+        If usage_acc (UsageAccumulator) is provided, token usage is recorded.
+        """
         kwargs = {
             "model": settings.kimi_model,
             "messages": [
@@ -244,6 +253,12 @@ class AIService:
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
         response = await self.kimi_client.chat.completions.create(**kwargs)
+        if usage_acc and response.usage:
+            usage_acc.add(
+                response.usage.prompt_tokens or 0,
+                response.usage.completion_tokens or 0,
+                settings.kimi_model,
+            )
         return response.choices[0].message.content.strip()
 
     @staticmethod
@@ -251,24 +266,36 @@ class AIService:
         """Remove surrogate characters that can't be encoded to UTF-8."""
         return text.encode("utf-8", errors="replace").decode("utf-8")
 
-    async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None) -> str:
-        """Route to the right AI provider. Kimi is always tried first for all tweet operations."""
-        model = model or settings.default_ai_model
+    async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None, max_tokens: int = 1000, usage_acc=None) -> str:
+        """Route to the right AI provider for tweet/bot operations.
+        Primary: Claude Opus 4.8. Kimi/GPT remain only as automatic fallback
+        if Claude is unavailable (missing key, outage, or no credits).
+        """
+        import logging
+        _log = logging.getLogger("ai_service")
+
+        if settings.anthropic_api_key:
+            try:
+                result = await self._call_claude(system_prompt, user_prompt, model=settings.anthropic_model, max_tokens=max_tokens, usage_acc=usage_acc)
+                return self._sanitize_text(result)
+            except Exception as e:
+                _log.warning("Claude Opus 4.8 failed, trying Kimi: %s", e)
 
         if settings.kimi_api_key:
             try:
-                result = await self._call_kimi(system_prompt, user_prompt)
+                result = await self._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc)
                 return self._sanitize_text(result)
             except Exception as e:
-                import logging
-                logging.getLogger("ai_service").warning(f"Kimi failed, trying fallback: {e}")
+                _log.warning("Kimi failed, trying GPT-4: %s", e)
 
-        if self._is_claude_model(model) and settings.anthropic_api_key:
-            return self._sanitize_text(await self._call_claude(system_prompt, user_prompt, model))
-        elif settings.openai_api_key:
-            return self._sanitize_text(await self._call_openai(system_prompt, user_prompt, model))
-        else:
-            raise RuntimeError("No AI provider available")
+        if settings.openai_api_key:
+            try:
+                result = await self._call_openai(system_prompt, user_prompt, model="gpt-4", max_tokens=max_tokens, usage_acc=usage_acc)
+                return self._sanitize_text(result)
+            except Exception as e:
+                _log.warning("GPT-4 also failed: %s", e)
+
+        raise RuntimeError("No AI provider available")
 
     async def generate_tweet(
         self,
@@ -428,10 +455,22 @@ Your background knowledge on this topic:
 
         system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
 
-        # Try Kimi K2.5 first (better long-form writing)
+        # Try Claude Opus 4.8 first (primary model for all AI work)
+        if settings.anthropic_api_key:
+            try:
+                logger.info(f"Generating {language.upper()} blog with Claude Opus 4.8")
+                result = await self._call_claude(system, user_prompt, model=settings.anthropic_model, max_tokens=4096)
+                lines = result.strip().split("\n", 1)
+                title = lines[0].strip().lstrip("#").strip()
+                body = lines[1].strip() if len(lines) > 1 else result
+                return {"title": title, "content": body, "model": settings.anthropic_model}
+            except Exception as e:
+                logger.warning(f"Claude Opus 4.8 failed, trying Kimi: {e}")
+
+        # Fallback: Kimi K2.5 long-form
         if settings.kimi_api_key:
             try:
-                logger.info(f"Generating {language.upper()} blog with Kimi K2.5")
+                logger.info(f"Generating {language.upper()} blog with Kimi K2.5 (fallback)")
                 result = await self._call_kimi(system, user_prompt, max_tokens=4096)
                 lines = result.strip().split("\n", 1)
                 title = lines[0].strip().lstrip("#").strip()
@@ -440,7 +479,7 @@ Your background knowledge on this topic:
             except Exception as e:
                 logger.warning(f"Kimi K2.5 failed, falling back to default: {e}")
 
-        # Fallback to default AI model with higher token limit for long-form
+        # Final fallback to default AI model
         logger.info(f"Falling back to default model for {language.upper()} blog")
         fallback_model = model or settings.default_ai_model
         if self._is_claude_model(fallback_model):

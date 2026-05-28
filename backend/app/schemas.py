@@ -46,7 +46,7 @@ class ArticleListResponse(BaseModel):
 class TweetCreate(BaseModel):
     content: str
     article_id: Optional[int] = None
-    ai_model: str = "gpt-4"
+    ai_model: str = "claude-opus-4-8"
 
 
 class TweetResponse(BaseModel):
@@ -142,7 +142,7 @@ class DashboardStats(BaseModel):
 
 class GenerateTweetRequest(BaseModel):
     article_id: Optional[int] = None
-    ai_model: str = "gpt-4"
+    ai_model: str = "claude-opus-4-8"
     custom_prompt: Optional[str] = None
 
 

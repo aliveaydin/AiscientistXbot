@@ -4,14 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from datetime import datetime
+from app.config import settings
 from app.database import get_db
 from app.models import RLEnvironment
 from app.services.architect_service import architect_service
 from app.services.sandbox_runner import sandbox_runner
+from app.auth import require_admin
 
 logger = logging.getLogger("rl_envs")
 
-router = APIRouter(prefix="/api/rl-envs", tags=["RL Environments"])
+router = APIRouter(prefix="/api/rl-envs", tags=["RL Environments"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/")
@@ -85,7 +87,7 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
         code=code,
         difficulty=difficulty,
         status=status,
-        ai_model_used="kimi-k2.5",
+        ai_model_used=settings.anthropic_model,
         topic=topic,
         published_at=datetime.utcnow() if auto_publish else None,
     )
@@ -177,6 +179,10 @@ async def delete_environment(env_id: int, db: AsyncSession = Depends(get_db)):
     if not env:
         raise HTTPException(status_code=404, detail="Environment not found")
 
+    from sqlalchemy import delete as sql_delete
+    from app.models import TrainingRun, EnvVersion
+    await db.execute(sql_delete(TrainingRun).where(TrainingRun.env_id == env_id))
+    await db.execute(sql_delete(EnvVersion).where(EnvVersion.env_id == env_id))
     await db.delete(env)
     await db.commit()
     return {"success": True}

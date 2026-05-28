@@ -16,10 +16,19 @@ class Settings(BaseSettings):
     twitter_access_token_secret: str = os.getenv("TWITTER_ACCESS_TOKEN_SECRET", "")
     twitter_bearer_token: str = os.getenv("TWITTER_BEARER_TOKEN", "")
 
+    # Kualia Twitter API (marketing account)
+    kualia_twitter_api_key: str = os.getenv("KUALIA_TWITTER_API_KEY", "")
+    kualia_twitter_api_secret: str = os.getenv("KUALIA_TWITTER_API_SECRET", "")
+    kualia_twitter_access_token: str = os.getenv("KUALIA_TWITTER_ACCESS_TOKEN", "")
+    kualia_twitter_access_token_secret: str = os.getenv("KUALIA_TWITTER_ACCESS_TOKEN_SECRET", "")
+    kualia_twitter_bearer_token: str = os.getenv("KUALIA_TWITTER_BEARER_TOKEN", "")
+
     # AI Models
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
-    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "kimi-k2.5")
+    # Claude Opus 4.8 is the primary model for all AI work across kualia.
+    anthropic_model: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+    default_ai_model: str = os.getenv("DEFAULT_AI_MODEL", "claude-opus-4-8")
 
     # Kimi API (for blog generation)
     kimi_api_key: str = os.getenv("KIMI_API_KEY", "")
@@ -37,6 +46,12 @@ class Settings(BaseSettings):
     # Persistent storage
     data_dir: str = os.getenv("DATA_DIR", "./data")
     articles_dir: str = os.getenv("ARTICLES_DIR", os.path.join(os.getenv("DATA_DIR", "./data"), "articles"))
+
+    # Email (Resend)
+    resend_api_key: str = os.getenv("RESEND_API_KEY", "")
+    email_from_transactional: str = os.getenv("EMAIL_FROM_TRANSACTIONAL", "kualia.ai <noreply@kualia.ai>")
+    email_from_marketing: str = os.getenv("EMAIL_FROM_MARKETING", "kualia.ai <hello@kualia.ai>")
+    app_url: str = os.getenv("APP_URL", "https://kualia.ai")
 
     # Database
     database_url: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{os.path.join(os.getenv('DATA_DIR', './data'), 'bot.db')}")

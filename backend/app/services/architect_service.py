@@ -47,6 +47,18 @@ environments that are fully compatible with Gymnasium v0.29+.
    NEVER use np.random.seed, np.random.rand, random.random, or any legacy API.
 3. self.np_random is automatically set by super().reset(seed=seed).
 
+=== DESIGN PHILOSOPHY ===
+The user's description is your blueprint. Read it carefully — it may contain
+requirements about BOTH the environment AND the agent's capabilities:
+- Environment-side: dynamics, physics, rules, goals, difficulty
+- Agent-side: what the agent should observe, how it should learn, what
+  behaviors it should develop (self-observation, memory, adaptation, etc.)
+You MUST implement BOTH sides. If the user says "the agent should track its
+own past actions" or "the environment changes dynamically and the agent must
+adapt", translate those into concrete observation space dimensions and reward
+components. The environment IS the interface between the hypothesis and the
+agent — everything the user envisions must be encoded into obs/action/reward.
+
 === CODE QUALITY RULES ===
 1. Add type hints to every method signature.
 2. Write a class-level docstring describing the environment, its observation space,
@@ -64,11 +76,22 @@ environments that are fully compatible with Gymnasium v0.29+.
    novelty bonuses, curriculum bounds).
 5. Write every reward component into the info dict for debugging:
    info["reward_components"] = {"goal": 1.0, "penalty": -0.2, ...}
+6. If the user's description specifies behavioral goals (adaptation, learning
+   from experience, strategy switching, etc.), include reward components that
+   directly incentivize those behaviors.
 
 === OBSERVATION SPACE RULES ===
 1. Normalise ALL observation values to [-1, 1] or [0, 1].
-2. Include ONLY information the agent needs for decision-making.
+2. Include information the agent needs for decision-making.
 3. Use gymnasium.spaces.Box with explicit low, high, shape, and dtype=np.float32.
+4. If the user's description specifies agent-side mechanisms (self-observation,
+   experience tracking, memory, adaptive behavior), embed them as concrete
+   dimensions in the observation space. Examples:
+   - Recent action history (last N actions)
+   - Recent reward trajectory (last N rewards)
+   - Strategy effectiveness signal (am I improving or stagnating?)
+   - Environment change vector (what changed since last step?)
+   For standard descriptions without such requests, keep obs space simple.
 
 === ACTION SPACE RULES ===
 1. Discrete: finite choices (e.g. buy/sell/hold).
@@ -518,29 +541,35 @@ class ArchitectService:
         system_prompt: str,
         user_prompt: str,
         max_tokens: int = 4096,
+        usage_acc=None,
     ) -> str:
-        """Call an LLM with Kimi-first, Claude-fallback, OpenAI-last strategy."""
+        """Call an LLM with Claude Opus 4.8 first, then Kimi, then OpenAI."""
+        try:
+            if settings.anthropic_api_key:
+                return await ai_service._call_claude(
+                    system_prompt, user_prompt, model=settings.anthropic_model,
+                    max_tokens=max_tokens, usage_acc=usage_acc,
+                )
+        except Exception as e:
+            logger.warning("Claude Opus 4.8 call failed, trying Kimi: %s", e)
+
         try:
             if settings.kimi_api_key:
                 return await ai_service._call_kimi(
-                    system_prompt, user_prompt, max_tokens=max_tokens,
+                    system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc,
                 )
         except Exception as e:
-            logger.warning("Kimi call failed, trying Claude: %s", e)
+            logger.warning("Kimi call failed, trying OpenAI: %s", e)
 
-        try:
-            if settings.anthropic_api_key:
-                return await ai_service._call_claude(system_prompt, user_prompt)
-        except Exception as e:
-            logger.warning("Claude call failed, trying OpenAI: %s", e)
-
-        return await ai_service._call_openai(system_prompt, user_prompt)
+        return await ai_service._call_openai(
+            system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc,
+        )
 
     # ------------------------------------------------------------------
     # Domain classification
     # ------------------------------------------------------------------
 
-    async def classify_domain(self, description: str) -> str:
+    async def classify_domain(self, description: str, usage_acc=None) -> str:
         """Classify the domain of an environment description.
 
         Uses fast keyword matching first; falls back to LLM classification
@@ -575,6 +604,7 @@ class ArchitectService:
                 "You are a domain classifier. Reply with a single word.",
                 llm_prompt,
                 max_tokens=20,
+                usage_acc=usage_acc,
             )
             domain = result.strip().lower().rstrip(".")
             if domain in _DOMAIN_KEYWORDS or domain == "custom":
@@ -588,7 +618,7 @@ class ArchitectService:
     # Skill system (Layer 1 + Layer 2)
     # ------------------------------------------------------------------
 
-    async def _get_skill_prompt(self, domain: str, description: str) -> str:
+    async def _get_skill_prompt(self, domain: str, description: str, usage_acc=None) -> str:
         """Return domain-specific skill prompt.
 
         Layer 1: return built-in skill if the domain is known.
@@ -608,6 +638,7 @@ class ArchitectService:
                 "You are an RL environment design expert.",
                 DYNAMIC_SKILL_PROMPT.format(description=description),
                 max_tokens=2048,
+                usage_acc=usage_acc,
             )
             header = f"=== DYNAMIC SKILL: {domain.upper()} ===\n"
             full_skill = header + skill_text
@@ -625,12 +656,13 @@ class ArchitectService:
         self,
         description: str,
         domain: Optional[str] = None,
+        usage_acc=None,
     ) -> dict:
         """Convert a natural-language description into a structured env spec JSON."""
         if domain is None:
-            domain = await self.classify_domain(description)
+            domain = await self.classify_domain(description, usage_acc=usage_acc)
 
-        skill_prompt = await self._get_skill_prompt(domain, description)
+        skill_prompt = await self._get_skill_prompt(domain, description, usage_acc=usage_acc)
 
         system = ARCHITECT_SYSTEM_PROMPT + "\n\n" + skill_prompt + "\n\n" + SPEC_GENERATION_PROMPT
         user_prompt = (
@@ -640,7 +672,7 @@ class ArchitectService:
         )
 
         logger.info("Generating env spec for domain=%s", domain)
-        response = await self._call_llm(system, user_prompt, max_tokens=2048)
+        response = await self._call_llm(system, user_prompt, max_tokens=2048, usage_acc=usage_acc)
         spec = self._extract_json(response)
         spec.setdefault("domain", domain)
         return spec
@@ -654,15 +686,16 @@ class ArchitectService:
         description: str,
         domain: Optional[str] = None,
         difficulty: str = "medium",
+        usage_acc=None,
     ) -> Dict[str, Any]:
         """Generate complete Gymnasium environment code from a description.
 
         Single LLM call: produces both spec JSON and full code together.
         """
         if domain is None:
-            domain = await self.classify_domain(description)
+            domain = await self.classify_domain(description, usage_acc=usage_acc)
 
-        skill_prompt = await self._get_skill_prompt(domain, description)
+        skill_prompt = await self._get_skill_prompt(domain, description, usage_acc=usage_acc)
         difficulty_hint = _DIFFICULTY_MODIFIERS.get(difficulty, _DIFFICULTY_MODIFIERS["medium"])
 
         combined_prompt = f"""Generate a complete Gymnasium v0.29+ environment.
@@ -692,7 +725,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         system = ARCHITECT_SYSTEM_PROMPT + "\n\n" + skill_prompt
 
         logger.info("Generating env spec+code in single call: domain=%s, difficulty=%s", domain, difficulty)
-        response = await self._call_llm(system, combined_prompt, max_tokens=8192)
+        response = await self._call_llm(system, combined_prompt, max_tokens=8192, usage_acc=usage_acc)
 
         spec_raw = self._extract_section(response, "ENV_SPEC")
         code_raw = self._extract_section(response, "ENV_CODE")
@@ -738,6 +771,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         original_code: str,
         env_spec: str,
         test_results: str,
+        usage_acc=None,
     ) -> str:
         """Attempt to fix environment code that failed tests.
 
@@ -763,7 +797,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         )
 
         logger.info("Attempting to fix env code based on test failures")
-        response = await self._call_llm(system, user_prompt, max_tokens=8192)
+        response = await self._call_llm(system, user_prompt, max_tokens=8192, usage_acc=usage_acc)
         return self._extract_code(response)
 
     # ------------------------------------------------------------------
@@ -842,6 +876,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         current_spec_json: str,
         user_message: str,
         project_context: Optional[Dict[str, Any]] = None,
+        usage_acc=None,
     ) -> Dict[str, Any]:
         """Apply a conversational change or answer a question about an environment.
 
@@ -859,7 +894,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         )
 
         logger.info("Iterating env with user message: %.80s...", user_message)
-        response = await self._call_llm(system, user_prompt, max_tokens=8192)
+        response = await self._call_llm(system, user_prompt, max_tokens=8192, usage_acc=usage_acc)
 
         mode_raw = (self._extract_section(response, "MODE") or "change").strip().lower()
         is_question = mode_raw.startswith("question")

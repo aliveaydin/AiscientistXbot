@@ -8,8 +8,9 @@ from app.services.scheduler_service import scheduler_service
 from app.services.twitter_service import twitter_service
 from app.services.ai_service import ai_service
 from app.config import settings
+from app.auth import require_admin
 
-router = APIRouter(prefix="/api/settings", tags=["Settings"])
+router = APIRouter(prefix="/api/settings", tags=["Settings"], dependencies=[Depends(require_admin)])
 
 
 async def _get_setting(db: AsyncSession, key: str, default: str) -> str:
@@ -118,7 +119,8 @@ async def get_available_models():
             {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo"},
         ],
         "anthropic": [
-            {"id": "claude-sonnet-4-20250514", "name": "Claude 3.5 Sonnet"},
+            {"id": "claude-opus-4-8", "name": "Claude Opus 4.8 (default)"},
+            {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6"},
             {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku"},
             {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
         ],
