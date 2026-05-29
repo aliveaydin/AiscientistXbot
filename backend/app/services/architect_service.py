@@ -754,7 +754,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         system = ARCHITECT_SYSTEM_PROMPT + "\n\n" + skill_prompt
 
         logger.info("Generating env spec+code in single call: domain=%s, difficulty=%s", domain, difficulty)
-        response = await self._call_llm(system, combined_prompt, max_tokens=8192, usage_acc=usage_acc)
+        response = await self._call_llm(system, combined_prompt, max_tokens=16000, usage_acc=usage_acc)
 
         spec_raw = self._extract_section(response, "ENV_SPEC")
         code_raw = self._extract_section(response, "ENV_CODE")
@@ -830,7 +830,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         )
 
         logger.info("Attempting to fix env code based on test failures")
-        response = await self._call_llm(system, user_prompt, max_tokens=8192, usage_acc=usage_acc)
+        response = await self._call_llm(system, user_prompt, max_tokens=16000, usage_acc=usage_acc)
         return self._extract_code(response)
 
     @staticmethod
@@ -988,7 +988,7 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         )
 
         logger.info("Iterating env with user message: %.80s...", user_message)
-        response = await self._call_llm(system, user_prompt, max_tokens=8192, usage_acc=usage_acc)
+        response = await self._call_llm(system, user_prompt, max_tokens=16000, usage_acc=usage_acc)
 
         mode_raw = (self._extract_section(response, "MODE") or "change").strip().lower()
         is_question = mode_raw.startswith("question")
