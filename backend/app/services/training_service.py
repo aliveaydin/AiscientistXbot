@@ -399,6 +399,7 @@ class TrainingService:
         gamma = config.get("gamma")
         net_arch = config.get("net_arch")
         seed = config.get("seed")
+        env_kwargs = config.get("env_kwargs") or {}
 
         extra_args = ""
         if learning_rate:
@@ -425,6 +426,7 @@ class TrainingService:
         output_dir_escaped = json.dumps(output_dir)
         continue_path_escaped = json.dumps(continue_from_path) if continue_from_path else "None"
         seed_repr = "None" if seed is None else str(int(seed))
+        env_kwargs_repr = repr(dict(env_kwargs))
 
         script = f'''#!/usr/bin/env python3
 """Auto-generated SB3 training script with rich metrics."""
@@ -556,7 +558,13 @@ try:
                 write_json(CURVE_PATH, self.curve)
             return True
 
-    env = env_class()
+    ENV_KWARGS = {env_kwargs_repr}
+    try:
+        env = env_class(**ENV_KWARGS) if ENV_KWARGS else env_class()
+    except TypeError:
+        # Env constructor doesn't accept these kwargs; fall back to defaults.
+        env = env_class()
+        ENV_KWARGS = {{}}
 
     algorithm = "{algorithm}".upper()
     algo_map = {{"PPO": PPO, "DQN": DQN, "SAC": SAC, "A2C": A2C, "TD3": TD3}}
@@ -686,6 +694,8 @@ try:
         "sb3_version": sb3_version,
         "gymnasium_version": gym.__version__,
         "random_seed": {seed_repr},
+        "env_kwargs": ENV_KWARGS,
+        "rho": ENV_KWARGS.get("rho"),
     }})
 
     env.close()
