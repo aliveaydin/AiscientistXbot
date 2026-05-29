@@ -888,6 +888,7 @@ class LabService:
 
         # Build an ablation-aware results table for the analyst.
         ablation_table = await self._build_results_table(db, project.id)
+        rho_sweep_table = await self._build_rho_sweep_table(db, project.id)
         env_meta_res = await db.execute(
             select(RLEnvironment.variant_role).where(RLEnvironment.research_project_id == project.id)
         )
@@ -904,12 +905,30 @@ class LabService:
             if has_ablation else ""
         )
 
+        rho_block = ""
+        rho_instruction = ""
+        if rho_sweep_table:
+            rho_block = (
+                f"**ρ-SWEEP — Explicit-vs-Implicit Gap vs Non-Stationarity Rate "
+                f"(THE KEY RESULT for H2b):**\n{rho_sweep_table}\n\n"
+            )
+            rho_instruction = (
+                "\n\n**ρ-SWEEP ANALYSIS (REQUIRED):** A ρ-sweep was run across multiple "
+                "non-stationarity rates. You MUST add a dedicated subsection 'Gap vs ρ' that "
+                "(a) reproduces the gap-vs-ρ numbers, (b) states explicitly whether the "
+                "explicit-over-implicit (treatment−baseline) advantage grows monotonically with ρ "
+                "as predicted by H2b, quoting the gap at the lowest and highest ρ, and "
+                "(c) interprets the macro contribution via the treatment−control gap. "
+                "Treat the gap-vs-ρ relationship as a figure-worthy headline finding."
+            )
+
         prompt = (
             f"You are analyzing REAL experimental results from actual RL training runs.\n\n"
             f"**Original Hypothesis:**\n{research_history[:3000]}\n\n"
             f"**Training Results:**\n{results_text}\n\n"
-            f"**Aggregated Results Table (mean±std across seeds, grouped by variant):**\n"
+            f"**Aggregated Results Table (mean±std across seeds, grouped by variant and ρ):**\n"
             f"{ablation_table or '(no aggregated table available)'}\n\n"
+            f"{rho_block}"
             f"**Training Curve Progression:**\n{curve_ctx}\n\n"
             f"Provide a thorough analysis:\n"
             f"1. **Key Findings** — What do the results show?\n"
@@ -918,7 +937,7 @@ class LabService:
             f"4. **Convergence Analysis** — How quickly did each algorithm learn? Learning dynamics?\n"
             f"5. **Strengths & Limitations** — What worked and what didn't?\n"
             f"6. **Conclusions** — Key takeaways for the research community"
-            f"{ablation_instruction}\n\n"
+            f"{ablation_instruction}{rho_instruction}\n\n"
             f"Be rigorous and specific. These are real results from actual training, not simulations."
         )
 
@@ -963,7 +982,15 @@ class LabService:
         cells: dict = defaultdict(list)
         for run in runs:
             res = json.loads(run.results_json) if run.results_json else {}
-            cells[(run.env_id, run.algorithm)].append(res)
+            rho = res.get("rho")
+            if rho is None:
+                try:
+                    cfg = json.loads(run.config_json) if run.config_json else {}
+                    rho = (cfg.get("env_kwargs") or {}).get("rho")
+                except Exception:
+                    rho = None
+            rho_key = round(float(rho), 4) if isinstance(rho, (int, float)) else None
+            cells[(run.env_id, run.algorithm, rho_key)].append(res)
 
         def _mean(xs):
             xs = [x for x in xs if isinstance(x, (int, float))]
@@ -982,19 +1009,20 @@ class LabService:
             return f"{val:.{digits}f}"
 
         lines = [
-            "| Variant | Environment | Algorithm | Seeds | Mean Reward ± Std | Success Rate | Train Time (s) |",
-            "|---|---|---|---|---|---|---|",
+            "| Variant | Environment | Algorithm | ρ | Seeds | Mean Reward ± Std | Success Rate | Train Time (s) |",
+            "|---|---|---|---|---|---|---|---|",
         ]
-        # Sort: baseline first, then treatment, then control, then misc; group by env.
+        # Sort: baseline first, then treatment, then control, then misc; group by env, then rho.
         role_order = {"baseline": 0, "control": 1, "treatment": 2}
 
         def _sort_key(item):
-            (env_id, algo), _ = item
+            (env_id, algo, rho_key), _ = item
             meta = env_meta.get(env_id, {})
             role = (meta.get("variant_role") or "zzz").lower()
-            return (role_order.get(role, 99), meta.get("name", ""), algo)
+            return (role_order.get(role, 99), meta.get("name", ""), algo,
+                    rho_key if rho_key is not None else -1.0)
 
-        for (env_id, algo), results in sorted(cells.items(), key=_sort_key):
+        for (env_id, algo, rho_key), results in sorted(cells.items(), key=_sort_key):
             meta = env_meta.get(env_id, {})
             env_name = meta.get("name") or f"Env {env_id}"
             role = meta.get("variant_role") or "—"
@@ -1014,12 +1042,106 @@ class LabService:
                 f"{_mean(srs) * 100:.1f}%" if _mean(srs) is not None else "N/A"
             )
             time_cell = _fmt(_mean(times), 1) if _mean(times) is not None else "N/A"
+            rho_cell = "default" if rho_key is None else f"{rho_key:g}"
             lines.append(
-                f"| {variant_cell} | {env_name} | {algo} | {len(results)} | "
+                f"| {variant_cell} | {env_name} | {algo} | {rho_cell} | {len(results)} | "
                 f"{reward_cell} | {success_cell} | {time_cell} |"
             )
 
         return "\n".join(lines)
+
+    async def _build_rho_sweep_table(self, db: AsyncSession, project_id: int) -> str:
+        """Build the explicit-vs-implicit gap as a function of the non-stationarity
+        rate ρ — the core curve for H2b. Returns '' when fewer than two distinct ρ
+        values are present (i.e. no sweep was run)."""
+        from collections import defaultdict
+
+        env_rows = await db.execute(
+            select(RLEnvironment.id, RLEnvironment.variant_role)
+            .where(RLEnvironment.research_project_id == project_id)
+        )
+        role_by_env = {r[0]: (r[1] or "").lower() for r in env_rows.fetchall()}
+        if not role_by_env:
+            return ""
+
+        runs_result = await db.execute(
+            select(TrainingRun).where(
+                TrainingRun.env_id.in_(list(role_by_env.keys())),
+                TrainingRun.status == "completed",
+            )
+        )
+        runs = runs_result.scalars().all()
+
+        data: dict = defaultdict(list)  # (algo, rho, role) -> [mean_reward]
+        rhos: set = set()
+        algos: set = set()
+        for run in runs:
+            res = json.loads(run.results_json) if run.results_json else {}
+            rho = res.get("rho")
+            if rho is None:
+                try:
+                    cfg = json.loads(run.config_json) if run.config_json else {}
+                    rho = (cfg.get("env_kwargs") or {}).get("rho")
+                except Exception:
+                    rho = None
+            if not isinstance(rho, (int, float)):
+                continue
+            role = role_by_env.get(run.env_id)
+            mr = res.get("mean_reward")
+            if not role or not isinstance(mr, (int, float)):
+                continue
+            data[(run.algorithm, round(float(rho), 4), role)].append(mr)
+            rhos.add(round(float(rho), 4))
+            algos.add(run.algorithm)
+
+        if not data or len(rhos) < 2:
+            return ""
+
+        def _mean(xs):
+            xs = [x for x in xs if isinstance(x, (int, float))]
+            return sum(xs) / len(xs) if xs else None
+
+        def _f(v):
+            return "N/A" if v is None else f"{v:.3f}"
+
+        sections = []
+        for algo in sorted(algos):
+            rows = []
+            gaps = []  # (rho, gap treat-baseline)
+            for rho in sorted(rhos):
+                base = _mean(data.get((algo, rho, "baseline"), []))
+                ctrl = _mean(data.get((algo, rho, "control"), []))
+                treat = _mean(data.get((algo, rho, "treatment"), []))
+                gap_b = (treat - base) if (treat is not None and base is not None) else None
+                gap_c = (treat - ctrl) if (treat is not None and ctrl is not None) else None
+                if gap_b is not None:
+                    gaps.append((rho, gap_b))
+                rows.append(
+                    f"| {rho:g} | {_f(base)} | {_f(ctrl)} | {_f(treat)} | {_f(gap_b)} | {_f(gap_c)} |"
+                )
+
+            mono = "insufficient data to assess the trend"
+            if len(gaps) >= 2:
+                diffs = [gaps[i + 1][1] - gaps[i][1] for i in range(len(gaps) - 1)]
+                if all(d >= -1e-9 for d in diffs):
+                    mono = ("the gap is monotonically NON-DECREASING with ρ, consistent with H2b "
+                            f"(gap rises from {gaps[0][1]:.3f} at ρ={gaps[0][0]:g} to "
+                            f"{gaps[-1][1]:.3f} at ρ={gaps[-1][0]:g})")
+                elif all(d <= 1e-9 for d in diffs):
+                    mono = ("the gap is monotonically non-increasing with ρ, which CONTRADICTS H2b "
+                            f"(gap falls from {gaps[0][1]:.3f} to {gaps[-1][1]:.3f})")
+                else:
+                    mono = (f"the gap is non-monotonic in ρ (endpoints: gap(ρ={gaps[0][0]:g})="
+                            f"{gaps[0][1]:.3f} → gap(ρ={gaps[-1][0]:g})={gaps[-1][1]:.3f})")
+
+            sections.append(
+                f"### ρ-sweep — explicit-vs-implicit gap ({algo})\n"
+                f"| ρ | baseline (ext-only) | control (micro+mezo) | treatment (full) | "
+                f"gap (treat−baseline) | gap (treat−control) |\n"
+                f"|---|---|---|---|---|---|\n" + "\n".join(rows) +
+                f"\n\n_Trend: {mono}._"
+            )
+        return "\n\n".join(sections)
 
     async def _build_curve_descriptions(self, db: AsyncSession, project_id: int) -> str:
         """Build textual descriptions of training curves for the paper."""
@@ -1107,6 +1229,7 @@ class LabService:
         env_ctx = "\n\n".join(env_descriptions) if env_descriptions else "No environment details."
 
         results_table = await self._build_results_table(db, project.id)
+        rho_sweep_table = await self._build_rho_sweep_table(db, project.id)
         curve_desc = await self._build_curve_descriptions(db, project.id)
 
         refs_result = await db.execute(
@@ -1155,6 +1278,18 @@ class LabService:
             f"This paper is based on REAL experiments. We built actual RL environments and trained real agents.\n\n"
             f"**Environment Specifications:**\n{env_ctx}\n\n"
             f"**Experimental Results Table:**\n{results_table}\n\n"
+            + (
+                f"**ρ-Sweep — Explicit-vs-Implicit Gap vs Non-Stationarity Rate (HEADLINE RESULT):**\n"
+                f"{rho_sweep_table}\n\n"
+                f"MANDATORY: The paper MUST present this gap-vs-ρ relationship as a primary result. "
+                f"Include (1) a table of mean reward per variant at each ρ with the treatment−baseline and "
+                f"treatment−control gaps, and (2) a figure titled along the lines of "
+                f"'Explicit-vs-implicit advantage as a function of the change rate ρ' — describe the curve "
+                f"in prose (render the data points as a markdown table acting as the figure source) and state "
+                f"clearly whether the advantage grows monotonically with ρ (H2b). Reference this figure/table "
+                f"in the Results text before it appears.\n\n"
+                if rho_sweep_table else ""
+            ) +
             f"**Training Curve Analysis:**\n{curve_desc}\n\n"
             f"**Related Literature (use as SUPPORTING references, not as the basis of the paper):**\n{ref_ctx}\n\n"
             f"**Bibliography entries:**\n{bib_text}\n\n"
