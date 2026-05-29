@@ -696,7 +696,7 @@ class LabService:
 
         # Source of truth for algos/timesteps/seeds: user's experiment_config when present,
         # otherwise the LLM-generated training_config from the hypothesis phase.
-        supported = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN"}
+        supported = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN", "RECURRENTPPO"}
         if exp_cfg:
             user_algos = [a.upper() for a in (exp_cfg.get("algorithms") or []) if a.upper() in supported]
             timesteps = int(exp_cfg.get("timesteps", 50000))

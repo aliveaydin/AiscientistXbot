@@ -3,7 +3,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
-SUPPORTED_ALGORITHMS = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN"}
+SUPPORTED_ALGORITHMS = {"PPO", "SAC", "DQN", "A2C", "TD3", "QRDQN", "RECURRENTPPO"}
 SUPPORTED_VARIANT_ROLES = {"treatment", "baseline", "control"}
 
 

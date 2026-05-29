@@ -20,7 +20,9 @@ logger = logging.getLogger("training")
 
 
 class TrainingService:
-    MAX_TRAINING_TIME = 1800  # 30 minutes max
+    # Per-run wall-clock limit. With the concurrency queue, runs no longer fight
+    # for CPU, so allow longer single-run budgets (configurable via env).
+    MAX_TRAINING_TIME = max(300, int(os.getenv("TRAINING_MAX_TIME", "3600")))  # default 60 min
     MODELS_DIR = os.path.join(os.getenv("DATA_DIR", "./data"), "trained_models")
 
     # Concurrency: this box has limited CPU/RAM. Run a small number of trainings
@@ -456,6 +458,10 @@ try:
         from sb3_contrib import QRDQN  # optional dependency
     except Exception:
         QRDQN = None
+    try:
+        from sb3_contrib import RecurrentPPO  # PPO-LSTM, optional dependency
+    except Exception:
+        RecurrentPPO = None
 
     env_code = {env_code_escaped}
     env_module_dir = tempfile.mkdtemp(prefix="rlforge_env_")
@@ -552,28 +558,35 @@ try:
 
     env = env_class()
 
-    algorithm = "{algorithm}"
+    algorithm = "{algorithm}".upper()
     algo_map = {{"PPO": PPO, "DQN": DQN, "SAC": SAC, "A2C": A2C, "TD3": TD3}}
     if QRDQN is not None:
         algo_map["QRDQN"] = QRDQN
+    if RecurrentPPO is not None:
+        algo_map["RECURRENTPPO"] = RecurrentPPO
     CONTINUE_FROM = {continue_path_escaped}
 
     if algorithm not in algo_map:
         write_json(RESULTS_PATH, {{"status": "failed", "error": f"Unknown algorithm: {{algorithm}} (available: {{list(algo_map.keys())}})"}})
         sys.exit(1)
 
+    # RecurrentPPO (PPO-LSTM) needs the recurrent policy.
+    IS_RECURRENT = algorithm == "RECURRENTPPO"
+    POLICY = "MlpLstmPolicy" if IS_RECURRENT else "MlpPolicy"
+
     AlgoClass = algo_map[algorithm]
     if CONTINUE_FROM and os.path.exists(CONTINUE_FROM):
         try:
             model = AlgoClass.load(CONTINUE_FROM, env=env)
         except Exception:
-            model = AlgoClass("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
+            model = AlgoClass(POLICY, env, verbose=0{extra_args}{policy_kwargs_arg})
     else:
         try:
-            model = AlgoClass("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
+            model = AlgoClass(POLICY, env, verbose=0{extra_args}{policy_kwargs_arg})
         except Exception:
             model = PPO("MlpPolicy", env, verbose=0{extra_args}{policy_kwargs_arg})
             algorithm = "PPO"
+            IS_RECURRENT = False
 
     callback = RichCallback(eval_freq={eval_freq})
     model.learn(total_timesteps={total_timesteps}, callback=callback, progress_bar=False)
@@ -597,9 +610,12 @@ try:
         done = False
         truncated = False
         step_count = 0
+        lstm_states = None
+        episode_start = np.ones((1,), dtype=bool)
 
         while not (done or truncated) and step_count < 5000:
-            action, _ = model.predict(obs, deterministic=True)
+            action, lstm_states = model.predict(obs, state=lstm_states, episode_start=episode_start, deterministic=True)
+            episode_start = np.zeros((1,), dtype=bool)
             act_serializable = action.tolist() if hasattr(action, "tolist") else action
             obs, reward, done, truncated, info = env.step(action)
             steps_list.append({{
