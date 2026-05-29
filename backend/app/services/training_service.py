@@ -23,16 +23,26 @@ class TrainingService:
     MAX_TRAINING_TIME = 1800  # 30 minutes max
     MODELS_DIR = os.path.join(os.getenv("DATA_DIR", "./data"), "trained_models")
 
+    # Concurrency: this box has limited CPU/RAM. Run a small number of trainings
+    # at a time and queue the rest, instead of spawning all subprocesses at once
+    # (which thrashes the CPU and triggers the OOM killer).
+    MAX_CONCURRENT = max(1, int(os.getenv("MAX_CONCURRENT_TRAININGS", "1")))
+    # Threads each training process may use (PyTorch/BLAS). Keeping this small
+    # prevents a single run from grabbing every core.
+    THREADS_PER_RUN = max(1, int(os.getenv("TRAINING_THREADS_PER_RUN", "1")))
+
     def __init__(self):
         os.makedirs(self.MODELS_DIR, exist_ok=True)
         self._active_processes: Dict[int, subprocess.Popen] = {}
+        self._queue: list[int] = []  # FIFO of run_ids waiting for a free slot
+        self._queue_lock = asyncio.Lock()
 
     async def recover_orphan_runs(self):
         """On startup, fix any runs stuck in 'running' that actually finished."""
         try:
             async with async_session() as db:
                 result = await db.execute(
-                    select(TrainingRun).where(TrainingRun.status == "running")
+                    select(TrainingRun).where(TrainingRun.status.in_(["running", "queued"]))
                 )
                 stuck_runs = result.scalars().all()
                 if not stuck_runs:
@@ -143,22 +153,38 @@ class TrainingService:
         with open(script_path, "w") as f:
             f.write(script_content)
 
-        process = subprocess.Popen(
-            [sys.executable, script_path],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=output_dir,
-        )
-        self._active_processes[training_run.id] = process
+        # Fail fast on incompatible algorithm/action-space combos (e.g. SAC/TD3
+        # on a Discrete env) instead of spawning a process that crashes anyway.
+        action_kind = self._action_space_kind(env.code)
+        if not self._algo_compatible(algorithm, action_kind):
+            msg = (f"Algorithm {algorithm} is incompatible with a {action_kind} "
+                   f"action space; skipped.")
+            training_run.status = "failed"
+            training_run.results_json = json.dumps({"status": "failed", "error": msg})
+            training_run.completed_at = datetime.utcnow()
+            await db.commit()
+            await db.refresh(training_run)
+            logger.warning("Training run %d: %s", training_run.id, msg)
+            return training_run
 
-        asyncio.create_task(
-            self._monitor_training(training_run.id, process, output_dir)
-        )
-
-        logger.info(
-            "Training run %d started for env %d with algorithm %s (pid=%d)",
-            training_run.id, env_id, algorithm, process.pid,
-        )
+        # Respect the concurrency limit: spawn now if a slot is free, else queue.
+        if len(self._active_processes) < self.MAX_CONCURRENT:
+            process = self._spawn_process(training_run.id, script_path, output_dir)
+            logger.info(
+                "Training run %d started for env %d with algorithm %s (pid=%d, active=%d)",
+                training_run.id, env_id, algorithm, process.pid, len(self._active_processes),
+            )
+        else:
+            training_run.status = "queued"
+            await db.commit()
+            await db.refresh(training_run)
+            async with self._queue_lock:
+                self._queue.append(training_run.id)
+            logger.info(
+                "Training run %d queued for env %d (algorithm %s, active=%d/%d, queue=%d)",
+                training_run.id, env_id, algorithm, len(self._active_processes),
+                self.MAX_CONCURRENT, len(self._queue),
+            )
         return training_run
 
     async def get_status(self, run_id: int, db: AsyncSession) -> dict:
@@ -227,6 +253,96 @@ class TrainingService:
                     pass
 
         return []
+
+    def _action_space_kind(self, env_code: str) -> str:
+        """Return 'discrete', 'continuous', or 'unknown' for the env action space."""
+        has_discrete = False
+        has_continuous = False
+        for line in env_code.split("\n"):
+            ll = line.lower()
+            if "action_space" in ll:
+                if "discrete" in ll:
+                    has_discrete = True
+                if "box" in ll:
+                    has_continuous = True
+        if has_discrete and not has_continuous:
+            return "discrete"
+        if has_continuous and not has_discrete:
+            return "continuous"
+        return "unknown"
+
+    @staticmethod
+    def _algo_compatible(algorithm: str, action_kind: str) -> bool:
+        """Whether an SB3 algorithm supports the env's action space.
+
+        SAC/TD3 require continuous (Box) actions; DQN/QRDQN require discrete
+        actions. PPO/A2C support both. 'unknown' is treated as compatible so we
+        don't block envs we can't statically classify.
+        """
+        algorithm = (algorithm or "").upper()
+        if action_kind == "unknown":
+            return True
+        continuous_only = {"SAC", "TD3"}
+        discrete_only = {"DQN", "QRDQN"}
+        if action_kind == "discrete" and algorithm in continuous_only:
+            return False
+        if action_kind == "continuous" and algorithm in discrete_only:
+            return False
+        return True
+
+    def _subprocess_env(self) -> dict:
+        """Environment for training subprocesses with capped thread counts."""
+        env = os.environ.copy()
+        n = str(self.THREADS_PER_RUN)
+        for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+            env[key] = n
+        return env
+
+    def _spawn_process(self, run_id: int, script_path: str, output_dir: str) -> subprocess.Popen:
+        """Launch the training subprocess and start its monitor task."""
+        process = subprocess.Popen(
+            [sys.executable, script_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=output_dir,
+            env=self._subprocess_env(),
+        )
+        self._active_processes[run_id] = process
+        asyncio.create_task(self._monitor_training(run_id, process, output_dir))
+        return process
+
+    async def _launch_queued(self, run_id: int):
+        """Start a previously-queued run (its script was already written)."""
+        output_dir = os.path.abspath(os.path.join(self.MODELS_DIR, f"run_{run_id}"))
+        script_path = os.path.join(output_dir, "train_script.py")
+        async with async_session() as db:
+            run = (await db.execute(
+                select(TrainingRun).where(TrainingRun.id == run_id)
+            )).scalar_one_or_none()
+            if not run or run.status != "queued":
+                return
+            if not os.path.exists(script_path):
+                run.status = "failed"
+                run.results_json = json.dumps({"status": "failed", "error": "Queued script missing"})
+                run.completed_at = datetime.utcnow()
+                await db.commit()
+                return
+            run.status = "running"
+            run.started_at = datetime.utcnow()
+            await db.commit()
+        self._spawn_process(run_id, script_path, output_dir)
+        logger.info("Dequeued training run %d -> running (active=%d, queued=%d)",
+                    run_id, len(self._active_processes), len(self._queue))
+
+    async def _drain_queue(self):
+        """Start queued runs while there is free capacity."""
+        while True:
+            async with self._queue_lock:
+                if not self._queue or len(self._active_processes) >= self.MAX_CONCURRENT:
+                    return
+                next_id = self._queue.pop(0)
+            await self._launch_queued(next_id)
 
     def _select_algorithm(self, env_code: str) -> str:
         """Auto-select algorithm based on action space type."""
@@ -312,6 +428,14 @@ class TrainingService:
 """Auto-generated SB3 training script with rich metrics."""
 import json, os, sys, traceback, importlib, importlib.util, inspect, tempfile, time
 import numpy as np
+
+# Cap CPU threads so concurrent training runs don't oversubscribe the box.
+try:
+    _nthreads = max(1, int(os.getenv("OMP_NUM_THREADS", "1")))
+    import torch as _torch
+    _torch.set_num_threads(_nthreads)
+except Exception:
+    pass
 
 OUTPUT_DIR = {output_dir_escaped}
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -690,6 +814,11 @@ except Exception as e:
                 logger.exception("Failed to update run %d status after monitor error", run_id)
         finally:
             self._active_processes.pop(run_id, None)
+            # A slot just freed up — start the next queued run, if any.
+            try:
+                await self._drain_queue()
+            except Exception:
+                logger.exception("Failed to drain training queue after run %d", run_id)
 
 
 training_service = TrainingService()
