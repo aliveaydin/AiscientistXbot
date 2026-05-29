@@ -21,7 +21,12 @@ export function CreateProjectForm() {
       const token = await getToken();
       const data = await createResearchProject(title.trim(), description, topic, token);
       router.push(`/research/${data.id}`);
-    } catch {
+    } catch (e: any) {
+      if (e.code === "INSUFFICIENT_CREDITS") {
+        alert(`Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Visit Settings → Subscription to manage your plan.`);
+      } else if (e.code === "PLAN_LIMIT_REACHED") {
+        alert("You've reached the limit for your plan. Visit Settings → Subscription to upgrade.");
+      }
       setLoading(false);
     }
   }
@@ -49,7 +54,7 @@ export function CreateProjectForm() {
         />
       </div>
       <div>
-        <label className="text-sm text-[#888] mb-1 block">Research Topic (optional, for ArXiv search)</label>
+        <label className="text-sm text-[#888] mb-1 block">Research Topic (optional, for literature search)</label>
         <input
           value={topic}
           onChange={(e) => setTopic(e.target.value)}

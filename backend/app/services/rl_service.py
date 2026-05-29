@@ -50,15 +50,9 @@ Difficulty: {difficulty}
 Create a complete, functional gymnasium environment with realistic dynamics. The environment should be challenging enough for the {difficulty} difficulty level."""
 
         try:
-            if settings.anthropic_api_key:
-                result = await ai_service._call_claude(RL_ENV_SYSTEM_PROMPT, user_prompt, model=settings.anthropic_model, max_tokens=4096)
-                model = settings.anthropic_model
-            elif settings.kimi_api_key:
-                result = await ai_service._call_kimi(RL_ENV_SYSTEM_PROMPT, user_prompt, max_tokens=4096)
-                model = settings.kimi_model
-            else:
-                result = await ai_service._call_openai(RL_ENV_SYSTEM_PROMPT, user_prompt)
-                model = "gpt-4"
+            # Env generation is mandatory Claude Opus 4.8 (with retries, no fallback).
+            result = await ai_service._call_claude_strict(RL_ENV_SYSTEM_PROMPT, user_prompt, model=settings.anthropic_model, max_tokens=4096)
+            model = settings.anthropic_model
         except Exception as e:
             logger.error(f"Failed to generate RL environment: {e}")
             raise

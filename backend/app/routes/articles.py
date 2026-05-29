@@ -6,9 +6,10 @@ from app.models import Article, Tweet
 from app.schemas import ArticleResponse, ArticleListResponse
 from app.services.article_service import ArticleService
 from app.services.ai_service import ai_service
+from app.auth import require_admin
 from typing import Optional
 
-router = APIRouter(prefix="/api/articles", tags=["Articles"])
+router = APIRouter(prefix="/api/articles", tags=["Articles"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/", response_model=list[ArticleListResponse])

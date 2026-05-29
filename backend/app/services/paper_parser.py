@@ -56,24 +56,13 @@ class PaperParser:
         truncated = await self.parse_paper_text(paper_text)
 
         try:
-            if settings.anthropic_api_key:
-                response = await ai_service._call_claude(
-                    ENV_EXTRACTION_PROMPT,
-                    f"Paper text:\n\n{truncated}",
-                    model=settings.anthropic_model,
-                    max_tokens=2048,
-                )
-            elif settings.kimi_api_key:
-                response = await ai_service._call_kimi(
-                    ENV_EXTRACTION_PROMPT,
-                    f"Paper text:\n\n{truncated}",
-                    max_tokens=2048,
-                )
-            else:
-                response = await ai_service._call_openai(
-                    ENV_EXTRACTION_PROMPT,
-                    f"Paper text:\n\n{truncated}",
-                )
+            # Mandatory Claude Opus 4.8 (with retries, no fallback).
+            response = await ai_service._call_claude_strict(
+                ENV_EXTRACTION_PROMPT,
+                f"Paper text:\n\n{truncated}",
+                model=settings.anthropic_model,
+                max_tokens=2048,
+            )
         except Exception as e:
             logger.error("Failed to extract env spec from paper: %s", e)
             return {}

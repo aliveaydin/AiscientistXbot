@@ -3,22 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   BookOpen,
-  Rocket,
-  Key,
   Layers,
-  Sparkles,
-  MessageSquare,
-  GitBranch,
-  Download,
   Brain,
-  Settings2,
-  BarChart3,
-  Play,
   FlaskConical,
-  FileText,
-  Code2,
-  Terminal,
-  Package,
   ChevronRight,
   ChevronDown,
   Menu,
@@ -50,7 +37,6 @@ const sidebarTree: SidebarItem[] = [
     children: [
       { id: "introduction", label: "Introduction" },
       { id: "quick-start", label: "Quick Start" },
-      { id: "authentication", label: "Authentication" },
     ],
   },
   {
@@ -71,9 +57,9 @@ const sidebarTree: SidebarItem[] = [
     icon: <Brain size={16} />,
     children: [
       { id: "algorithms", label: "Algorithms (PPO, SAC, DQN)" },
-      { id: "training-configuration", label: "Configuration" },
+      { id: "training-configuration", label: "Configuration & Hyperparameters" },
+      { id: "training-modes", label: "Training Modes" },
       { id: "monitoring-curves", label: "Monitoring & Curves" },
-      { id: "continue-training", label: "Continue Training" },
     ],
   },
   {
@@ -84,27 +70,6 @@ const sidebarTree: SidebarItem[] = [
       { id: "research-overview", label: "Overview" },
       { id: "phases-pipeline", label: "Phases & Pipeline" },
       { id: "paper-generation", label: "Paper Generation" },
-    ],
-  },
-  {
-    id: "api-reference",
-    label: "API Reference",
-    icon: <Code2 size={16} />,
-    children: [
-      { id: "api-catalog", label: "Catalog" },
-      { id: "api-generation", label: "Generation" },
-      { id: "api-builder", label: "Builder" },
-      { id: "api-training", label: "Training" },
-      { id: "api-research", label: "Research" },
-    ],
-  },
-  {
-    id: "python-sdk",
-    label: "Python SDK",
-    icon: <Terminal size={16} />,
-    children: [
-      { id: "sdk-installation", label: "Installation" },
-      { id: "sdk-usage", label: "Usage Examples" },
     ],
   },
 ];
@@ -139,7 +104,7 @@ function CodeBlock({ children, language }: { children: string; language?: string
   return (
     <div className="relative group my-4">
       <div className="flex items-center justify-between px-4 py-2 bg-[#111] border border-[#1a1a1a] rounded-t-lg">
-        <span className="text-xs text-[#555] font-mono">{language ?? "shell"}</span>
+        <span className="text-xs text-[#555] font-mono">{language ?? "python"}</span>
         <button
           onClick={copy}
           className="text-[#555] hover:text-white transition-colors"
@@ -151,62 +116,6 @@ function CodeBlock({ children, language }: { children: string; language?: string
       <pre className="bg-[#0a0a0a] border border-t-0 border-[#1a1a1a] rounded-b-lg p-4 overflow-x-auto text-sm leading-relaxed font-mono text-[#ccc]">
         <code>{children}</code>
       </pre>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  ParamTable                                                         */
-/* ------------------------------------------------------------------ */
-
-function ParamTable({ params }: { params: { name: string; type: string; required: boolean; desc: string }[] }) {
-  return (
-    <div className="my-4 overflow-x-auto border border-[#1a1a1a] rounded-lg">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-[#0a0a0a] text-left text-[#888]">
-            <th className="px-4 py-2 font-medium">Parameter</th>
-            <th className="px-4 py-2 font-medium">Type</th>
-            <th className="px-4 py-2 font-medium">Required</th>
-            <th className="px-4 py-2 font-medium">Description</th>
-          </tr>
-        </thead>
-        <tbody className="text-[#bbb]">
-          {params.map((p) => (
-            <tr key={p.name} className="border-t border-[#1a1a1a]">
-              <td className="px-4 py-2 font-mono text-white">{p.name}</td>
-              <td className="px-4 py-2 font-mono text-blue-400">{p.type}</td>
-              <td className="px-4 py-2">{p.required ? <span className="text-orange-400">Yes</span> : "No"}</td>
-              <td className="px-4 py-2">{p.desc}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Endpoint                                                           */
-/* ------------------------------------------------------------------ */
-
-function Endpoint({ method, path, desc }: { method: string; path: string; desc: string }) {
-  const color =
-    method === "GET"
-      ? "bg-blue-950 text-blue-400"
-      : method === "POST"
-        ? "bg-green-950 text-green-400"
-        : method === "DELETE"
-          ? "bg-red-950 text-red-400"
-          : "bg-yellow-950 text-yellow-400";
-
-  return (
-    <div className="border border-[#1a1a1a] rounded-lg p-4 my-3">
-      <div className="flex items-center gap-3 mb-1">
-        <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded ${color}`}>{method}</span>
-        <code className="text-sm font-mono text-[#ccc]">{path}</code>
-      </div>
-      <p className="text-sm text-[#888]">{desc}</p>
     </div>
   );
 }
@@ -398,8 +307,8 @@ export default function DocsPage() {
             <p className="text-sm text-[#888]">
               <strong className="text-white">Core capabilities:</strong> Environment generation from text or
               papers · Conversational builder · PPO / SAC / DQN training ·
-              Real-time monitoring · Version control · Research pipeline · Python
-              SDK · REST API
+              Real-time monitoring · Version control · Research pipeline ·
+              Paper generation with inline figures
             </p>
           </div>
         </section>
@@ -410,81 +319,31 @@ export default function DocsPage() {
             Get from zero to a trained agent in under five minutes.
           </p>
 
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">1. Install the Python SDK</h3>
-          <CodeBlock language="shell">pip install kualia</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">2. Generate an environment</h3>
-          <CodeBlock language="python">{`import kualia
-
-# Authenticate (or set KUALIA_API_KEY env var)
-kualia.configure(api_key="sk-your-key")
-
-# Describe what you want
-result = kualia.generate("Cart-pole with gusty wind and friction")
-print(result)
-# => { id: 42, slug: "cartpole-wind-friction", status: "ready" }`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">3. Use it locally</h3>
-          <CodeBlock language="python">{`env = kualia.make("cartpole-wind-friction")
-obs, info = env.reset(seed=42)
-
-for _ in range(1000):
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated or truncated:
-        obs, info = env.reset()
-
-env.close()`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">4. Train an agent</h3>
-          <CodeBlock language="python">{`run = kualia.train(
-    env_id=42,
-    algorithm="PPO",
-    total_timesteps=100_000,
-)
-print(run.status)  # "running"
-
-# Poll or use the dashboard to watch the curve
-run.wait()
-run.download_model("model.zip")`}</CodeBlock>
-        </section>
-
-        <section id="authentication" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">Authentication</h2>
+          <h3 className="text-lg font-semibold text-white mt-8 mb-3">1. Create an account</h3>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            All API requests require an API key passed via the{" "}
-            <code className="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded text-sm">X-API-Key</code> header.
-            You can create and manage keys from the{" "}
-            <span className="text-white">Dashboard → Settings</span> page.
+            Sign up with Google or GitHub. You&apos;ll land on your Dashboard immediately.
           </p>
 
-          <CodeBlock language="shell">{`curl -H "X-API-Key: sk-your-key" \\
-  https://kualia.ai/api/rlforge/catalog`}</CodeBlock>
-
+          <h3 className="text-lg font-semibold text-white mt-8 mb-3">2. Describe your environment</h3>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            For the Python SDK, pass the key directly or use an environment variable:
+            Use the Environment Builder to describe what you need in plain English.
+            The AI Architect Agent generates Gymnasium-compatible code, validates it with 8 automated tests,
+            and lets you iterate through chat. AI smart suggestions help you refine.
           </p>
-          <CodeBlock language="python">{`import kualia
 
-# Option A: explicit
-kualia.configure(api_key="sk-your-key")
+          <h3 className="text-lg font-semibold text-white mt-8 mb-3">3. Train an agent</h3>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            Choose an algorithm (PPO, SAC, DQN), configure hyperparameters, and hit train.
+            Use Continue, Fine-Tune, or Curriculum modes to improve your agent.
+            Watch live progress with real-time reward curves.
+          </p>
 
-# Option B: environment variable
-# export KUALIA_API_KEY=sk-your-key
-kualia.configure()  # picks up from env automatically`}</CodeBlock>
-
-          <ParamTable
-            params={[
-              { name: "X-API-Key", type: "string", required: true, desc: "Your API key from the dashboard settings page." },
-            ]}
-          />
-
-          <div className="border border-[#1a1a1a] rounded-lg p-4 bg-[#0a0a0a] my-6">
-            <p className="text-sm text-[#888]">
-              <strong className="text-orange-400">Security:</strong> Never commit your API key to version
-              control. Use environment variables or a secrets manager in production.
-            </p>
-          </div>
+          <h3 className="text-lg font-semibold text-white mt-8 mb-3">4. Run research (optional)</h3>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            Use the Research Lab to formulate a hypothesis, run real experiments,
+            and generate a complete academic paper with inline training figures —
+            downloadable as PDF.
+          </p>
         </section>
 
         {/* ============================================================ */}
@@ -519,38 +378,34 @@ kualia.configure()  # picks up from env automatically`}</CodeBlock>
           </p>
 
           <h3 className="text-lg font-semibold text-white mt-6 mb-2">Natural-language description</h3>
-          <p className="text-[#bbb] leading-relaxed mb-2">
+          <p className="text-[#bbb] leading-relaxed mb-4">
             Describe your environment in plain English. kualia&apos;s AI generates the
             full Gymnasium code including observation space, action space, reward
-            function, and dynamics.
+            function, and dynamics. You can specify the domain (robotics, finance,
+            games, etc.) and difficulty level.
           </p>
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/generate \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{
-    "description": "A 2D drone that must land on a moving platform",
-    "domain": "robotics",
-    "difficulty": "medium"
-  }'`}</CodeBlock>
 
           <h3 className="text-lg font-semibold text-white mt-8 mb-2">From a research paper</h3>
-          <p className="text-[#bbb] leading-relaxed mb-2">
+          <p className="text-[#bbb] leading-relaxed mb-4">
             Upload a PDF paper and kualia extracts the environment specification,
             reward structure, and constraints to generate a matching implementation.
+            This is useful for reproducing environments from published research.
           </p>
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/generate-from-paper \\
-  -H "X-API-Key: sk-your-key" \\
-  -F "file=@paper.pdf"`}</CodeBlock>
 
           <h3 className="text-lg font-semibold text-white mt-8 mb-2">Fork an existing environment</h3>
-          <p className="text-[#bbb] leading-relaxed mb-2">
+          <p className="text-[#bbb] leading-relaxed mb-4">
             Start from any published environment in the catalog and fork it with
-            your own modifications.
+            your own modifications. This is the fastest way to create a variant
+            of an existing environment.
           </p>
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/fork/42 \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{ "modifications": "Add obstacles and increase gravity" }'`}</CodeBlock>
+
+          <div className="border border-[#1a1a1a] rounded-lg p-4 bg-[#0a0a0a] my-6">
+            <p className="text-sm text-[#888]">
+              <strong className="text-white">Validation:</strong> Every generated environment goes through 8 automated tests
+              covering initialization, reset, step execution, observation/action space compliance, reward
+              structure, and Gymnasium compatibility. If any test fails, kualia auto-fixes the code.
+            </p>
+          </div>
         </section>
 
         <section id="chat-iteration" className="scroll-mt-24 mb-20">
@@ -561,22 +416,25 @@ kualia.configure()  # picks up from env automatically`}</CodeBlock>
             observation space, adding visualization, tweaking dynamics — and the AI
             updates the environment code accordingly.
           </p>
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/builder/42/chat \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{ "message": "Make the reward sparse: +1 only when the agent reaches the goal" }'`}</CodeBlock>
-
           <p className="text-[#bbb] leading-relaxed mb-4">
-            Each message creates a new version of the environment. You can
-            retrieve the full conversation history to understand how the
-            environment evolved:
+            <strong className="text-white">Example requests you can make:</strong>
           </p>
-          <CodeBlock language="shell">{`curl https://kualia.ai/api/rlforge/builder/42/history \\
-  -H "X-API-Key: sk-your-key"`}</CodeBlock>
-
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-4 ml-2">
+            <li>&quot;Make the reward sparse: +1 only when the agent reaches the goal&quot;</li>
+            <li>&quot;Add obstacles that move randomly every 100 steps&quot;</li>
+            <li>&quot;Increase the observation space to include velocity information&quot;</li>
+            <li>&quot;Change the action space from discrete to continuous&quot;</li>
+            <li>&quot;Add a time penalty to encourage faster solutions&quot;</li>
+          </ul>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            Each message creates a new version of the environment. The AI also provides
+            smart suggestions after each change, helping you think about what to iterate
+            on next — like adjusting reward shaping, adding curriculum difficulty, or
+            refining termination conditions.
+          </p>
           <p className="text-[#bbb] leading-relaxed">
-            The response includes each message, the code diff, and the version
-            number, so you always have full traceability.
+            You can view the full conversation history to understand how the
+            environment evolved over time.
           </p>
         </section>
 
@@ -587,17 +445,16 @@ kualia.configure()  # picks up from env automatically`}</CodeBlock>
             stores the full version tree so you can roll back to any previous
             state at any time.
           </p>
-          <CodeBlock language="shell">{`# Roll back to version 3
-curl -X POST https://kualia.ai/api/rlforge/builder/42/rollback \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{ "version": 3 }'`}</CodeBlock>
-
-          <p className="text-[#bbb] leading-relaxed">
+          <p className="text-[#bbb] leading-relaxed mb-4">
             Rollback does not delete later versions — it creates a new version
             based on the target, so you can always go forward again. Think of it
             like <code className="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded text-sm">git revert</code> rather
             than a hard reset.
+          </p>
+          <p className="text-[#bbb] leading-relaxed">
+            The Code tab in the builder shows your current environment code with
+            annotated sections for each major component: observation space, action space,
+            reward function, step logic, and reset logic.
           </p>
         </section>
 
@@ -608,20 +465,19 @@ curl -X POST https://kualia.ai/api/rlforge/builder/42/rollback \\
           </p>
 
           <h3 className="text-lg font-semibold text-white mt-6 mb-2">ZIP download</h3>
-          <p className="text-[#bbb] leading-relaxed mb-2">
+          <p className="text-[#bbb] leading-relaxed mb-4">
             Download a self-contained ZIP with the environment code,{" "}
             <code className="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded text-sm">requirements.txt</code>,
-            and a README:
+            and a README. You can use this package directly with Stable-Baselines3
+            or any other RL framework on your local machine.
           </p>
-          <CodeBlock language="shell">{`curl -o env.zip https://kualia.ai/api/rlforge/builder/42/export-zip \\
-  -H "X-API-Key: sk-your-key"`}</CodeBlock>
 
           <h3 className="text-lg font-semibold text-white mt-8 mb-2">GitHub push</h3>
           <p className="text-[#bbb] leading-relaxed">
-            From the dashboard, connect your GitHub account and push directly to
-            a repository. kualia creates the repo (or pushes to an existing one)
-            with proper file structure, CI checks, and a Gymnasium registration
-            entry point.
+            Connect your GitHub account from the builder and push directly to
+            a repository. kualia creates proper file structure and a Gymnasium
+            registration entry point so your environment is importable as a
+            Python package.
           </p>
         </section>
 
@@ -667,100 +523,113 @@ curl -X POST https://kualia.ai/api/rlforge/builder/42/rollback \\
               </div>
             ))}
           </div>
+
+          <div className="border border-[#1a1a1a] rounded-lg p-4 bg-[#0a0a0a] my-6">
+            <p className="text-sm text-[#888]">
+              <strong className="text-white">Auto-detect:</strong> If you&apos;re unsure which algorithm to use,
+              kualia can automatically select the best one based on your environment&apos;s
+              action and observation spaces.
+            </p>
+          </div>
         </section>
 
         <section id="training-configuration" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">Training Configuration</h2>
+          <h2 className="text-2xl font-bold text-white mb-3">Configuration & Hyperparameters</h2>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            Start a training run by specifying the environment ID, algorithm, and
-            hyperparameters. kualia provides sensible defaults for all optional
-            fields.
+            kualia provides sensible defaults for all training parameters, but you
+            can customize everything for advanced experiments.
           </p>
 
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/train/42 \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{
-    "algorithm": "PPO",
-    "total_timesteps": 100000,
-    "learning_rate": 0.0003,
-    "n_steps": 2048,
-    "batch_size": 64,
-    "gamma": 0.99
-  }'`}</CodeBlock>
+          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Basic settings</h3>
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-6 ml-2">
+            <li><strong className="text-white">Algorithm</strong> — PPO, SAC, or DQN (or Auto-detect)</li>
+            <li><strong className="text-white">Timesteps</strong> — Total training steps (e.g. 10K for a quick test, 100K–500K for meaningful results)</li>
+            <li><strong className="text-white">Learning Rate</strong> — Controls how fast the agent updates its policy. Default is usually good.</li>
+          </ul>
 
-          <ParamTable
-            params={[
-              { name: "algorithm", type: "string", required: false, desc: 'One of "PPO", "SAC", "DQN". Defaults to "PPO".' },
-              { name: "total_timesteps", type: "integer", required: false, desc: "Total training steps. Default: 50,000." },
-              { name: "learning_rate", type: "float", required: false, desc: "Learning rate. Default: 3e-4." },
-              { name: "n_steps", type: "integer", required: false, desc: "Steps per rollout (PPO only). Default: 2048." },
-              { name: "batch_size", type: "integer", required: false, desc: "Minibatch size. Default: 64." },
-              { name: "gamma", type: "float", required: false, desc: "Discount factor. Default: 0.99." },
-              { name: "seed", type: "integer", required: false, desc: "Random seed for reproducibility." },
-            ]}
-          />
+          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Advanced settings</h3>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            Expand &quot;Advanced Settings&quot; in the training panel to access:
+          </p>
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-6 ml-2">
+            <li><strong className="text-white">Batch Size</strong> — Number of samples per gradient update</li>
+            <li><strong className="text-white">Gamma (γ)</strong> — Discount factor. Higher values (0.99) make the agent more far-sighted</li>
+            <li><strong className="text-white">GAE Lambda</strong> — Generalized Advantage Estimation parameter (PPO)</li>
+            <li><strong className="text-white">Entropy Coefficient</strong> — Encourages exploration. Increase if the agent converges too early</li>
+            <li><strong className="text-white">N Steps</strong> — Rollout length per update (PPO). Larger values capture longer-term dependencies</li>
+            <li><strong className="text-white">Tau</strong> — Soft update coefficient for target networks (SAC)</li>
+            <li><strong className="text-white">Network Architecture</strong> — Configure hidden layer sizes for the policy and value networks</li>
+            <li><strong className="text-white">Random Seed</strong> — Set for reproducible experiments</li>
+          </ul>
+
+          <div className="border border-[#1a1a1a] rounded-lg p-4 bg-[#0a0a0a] my-6">
+            <p className="text-sm text-[#888]">
+              <strong className="text-white">Recommended timesteps:</strong> Quick test: 5K–10K steps (1–3 min).
+              Meaningful results: 50K–100K steps (5–15 min). Strong performance: 500K–1M steps (20–60 min).
+              Complex environments with high-dimensional observations or sparse rewards need more steps.
+            </p>
+          </div>
+        </section>
+
+        <section id="training-modes" className="scroll-mt-24 mb-20">
+          <h2 className="text-2xl font-bold text-white mb-3">Training Modes</h2>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            After completing a training run, you can continue improving your agent
+            using three distinct modes:
+          </p>
+
+          <div className="space-y-4 my-6">
+            <div className="border border-[#1a1a1a] rounded-lg p-5 bg-[#0a0a0a]">
+              <h4 className="text-white font-bold mb-2">Continue (Same Settings)</h4>
+              <p className="text-sm text-[#bbb]">
+                Resume training from the last checkpoint with the same hyperparameters.
+                Useful when the reward curve is still improving and you want more
+                steps to reach convergence.
+              </p>
+            </div>
+            <div className="border border-[#1a1a1a] rounded-lg p-5 bg-[#0a0a0a]">
+              <h4 className="text-white font-bold mb-2">Fine-Tune (Low Learning Rate)</h4>
+              <p className="text-sm text-[#bbb]">
+                Continue from the checkpoint but with a reduced learning rate and
+                shorter training run. Ideal for making small adjustments to an
+                already-trained agent without destabilizing its learned behavior.
+              </p>
+            </div>
+            <div className="border border-[#1a1a1a] rounded-lg p-5 bg-[#0a0a0a]">
+              <h4 className="text-white font-bold mb-2">Curriculum (Auto-Increase Difficulty)</h4>
+              <p className="text-sm text-[#bbb]">
+                The environment difficulty automatically increases during training.
+                The agent first masters the easier version and gradually faces harder
+                challenges. This is effective for complex environments where learning
+                from scratch at full difficulty is too hard.
+              </p>
+            </div>
+          </div>
         </section>
 
         <section id="monitoring-curves" className="scroll-mt-24 mb-20">
           <h2 className="text-2xl font-bold text-white mb-3">Monitoring & Curves</h2>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            While training is running, you can poll the status endpoint to get
-            real-time metrics. The dashboard also provides a live reward curve
-            visualization.
+            While training is running, the dashboard provides real-time feedback:
           </p>
-          <CodeBlock language="shell">{`# Check training status
-curl https://kualia.ai/api/rlforge/train/42/status \\
-  -H "X-API-Key: sk-your-key"
-
-# Response
-{
-  "status": "running",
-  "progress": 0.65,
-  "current_timestep": 65000,
-  "total_timesteps": 100000,
-  "mean_reward": 187.3,
-  "elapsed_seconds": 42
-}`}</CodeBlock>
-
-          <CodeBlock language="shell">{`# Get the full reward curve
-curl https://kualia.ai/api/rlforge/train/42/curve \\
-  -H "X-API-Key: sk-your-key"
-
-# Response
-{
-  "timesteps": [1000, 2000, 3000, ...],
-  "rewards": [12.5, 34.2, 67.8, ...],
-  "episode_lengths": [120, 145, 98, ...]
-}`}</CodeBlock>
-
-          <p className="text-[#bbb] leading-relaxed">
-            The curve data is suitable for plotting with matplotlib, plotly, or
-            any charting library. The dashboard renders it in real-time using a
-            streaming connection.
-          </p>
-        </section>
-
-        <section id="continue-training" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">Continue Training</h2>
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-6 ml-2">
+            <li><strong className="text-white">Reward curve</strong> — Live plot showing mean episode reward over training steps</li>
+            <li><strong className="text-white">Episode length</strong> — Tracks how long episodes last (decreasing length often means faster problem-solving)</li>
+            <li><strong className="text-white">Loss metrics</strong> — Policy loss, value loss, and entropy for diagnosing training health</li>
+            <li><strong className="text-white">Progress bar</strong> — Current step, total steps, estimated time remaining</li>
+          </ul>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            If a model needs more training steps, you can resume from the last
-            checkpoint without starting over. Pass the{" "}
-            <code className="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded text-sm">continue_from</code>{" "}
-            parameter with the ID of a completed training run:
+            After training completes, you get a full evaluation report with:
           </p>
-          <CodeBlock language="shell">{`curl -X POST https://kualia.ai/api/rlforge/train/42 \\
-  -H "Content-Type: application/json" \\
-  -H "X-API-Key: sk-your-key" \\
-  -d '{
-    "algorithm": "PPO",
-    "total_timesteps": 50000,
-    "continue_from": "run_abc123"
-  }'`}</CodeBlock>
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-4 ml-2">
+            <li>Mean and standard deviation of rewards across evaluation episodes</li>
+            <li>Best and worst episode performance</li>
+            <li>Training hyperparameters used</li>
+            <li>Reproducibility info (seed, algorithm version)</li>
+          </ul>
           <p className="text-[#bbb] leading-relaxed">
-            The training run inherits all hyperparameters from the previous run
-            unless you explicitly override them. This is useful for fine-tuning
-            or extending convergence.
+            All experiment data is saved so you can compare runs side-by-side
+            in the Experiments table.
           </p>
         </section>
 
@@ -776,14 +645,16 @@ curl https://kualia.ai/api/rlforge/train/42/curve \\
             lifecycle: from hypothesis formation to paper generation.
           </p>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            Each research project contains a conversational thread where you
-            describe your research goals. kualia&apos;s AI assistant helps you design
-            experiments, select baselines, and analyze results.
+            Two AI research agents collaborate on your project:
           </p>
+          <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-4 ml-2">
+            <li><strong className="text-white">Sage</strong> — Formulates hypotheses, conducts literature research, and writes the final paper</li>
+            <li><strong className="text-white">Atlas</strong> — Designs and generates environments, runs training experiments, and analyzes results</li>
+          </ul>
           <p className="text-[#bbb] leading-relaxed">
-            You can also upload reference papers to ground your research in
-            existing literature. kualia extracts key methods, results, and
-            experimental setups to inform your experiment design.
+            You provide a research topic and brief description. The agents handle
+            the rest — designing experiments, training agents, analyzing results,
+            and producing a paper with real data and inline training figures.
           </p>
         </section>
 
@@ -795,11 +666,10 @@ curl https://kualia.ai/api/rlforge/train/42/curve \\
 
           <div className="space-y-3 my-6">
             {[
-              { phase: "1. Hypothesis", desc: "Define your research question and expected outcomes." },
-              { phase: "2. Experiment Design", desc: "Select environments, algorithms, baselines, and metrics." },
-              { phase: "3. Execution", desc: "Run all training experiments with tracking and versioning." },
-              { phase: "4. Analysis", desc: "Compare results, generate plots, and run statistical tests." },
-              { phase: "5. Paper Generation", desc: "Auto-generate a LaTeX paper from your results and methodology." },
+              { phase: "1. Hypothesis", desc: "AI formulates a research question, defines the hypothesis, and outlines the experimental approach based on your topic." },
+              { phase: "2. Environment Design", desc: "The Architect Agent generates a custom Gymnasium environment tailored to test the hypothesis." },
+              { phase: "3. Experiments", desc: "Agents are trained in the generated environment. Multiple runs with different configurations provide robust data." },
+              { phase: "4. Literature & Paper", desc: "The system searches for relevant academic literature, analyzes all experimental results, and writes a complete research paper with inline training figures." },
             ].map((p) => (
               <div key={p.phase} className="flex items-start gap-3 border border-[#1a1a1a] rounded-lg p-4 bg-[#0a0a0a]">
                 <span className="text-white font-mono font-bold text-sm whitespace-nowrap">{p.phase}</span>
@@ -809,341 +679,36 @@ curl https://kualia.ai/api/rlforge/train/42/curve \\
           </div>
 
           <p className="text-[#bbb] leading-relaxed">
-            You can move between phases freely — for example, going back to
-            experiment design after seeing initial results.
+            You can re-run any phase if the results aren&apos;t satisfactory. For example,
+            re-run experiments with different hyperparameters, or regenerate the
+            environment with additional constraints.
           </p>
         </section>
 
         <section id="paper-generation" className="scroll-mt-24 mb-20">
           <h2 className="text-2xl font-bold text-white mb-3">Paper Generation</h2>
           <p className="text-[#bbb] leading-relaxed mb-4">
-            Once your experiments are complete, kualia can auto-generate a research
-            paper in LaTeX format. The generated paper includes:
+            Once your experiments are complete, kualia auto-generates a research
+            paper. The generated paper includes:
           </p>
           <ul className="list-disc list-inside text-[#bbb] space-y-2 mb-4 ml-2">
             <li>Abstract summarizing the research and key findings</li>
-            <li>Introduction with related work from uploaded references</li>
-            <li>Methodology section describing environments and algorithms</li>
-            <li>Results with auto-generated tables and reward curve figures</li>
+            <li>Introduction with related work from literature research</li>
+            <li>Methodology section describing the environment and algorithms</li>
+            <li>Results with inline training curves and evaluation metrics</li>
             <li>Discussion and conclusion sections</li>
-            <li>Bibliography from uploaded reference papers</li>
+            <li>Bibliography from referenced literature</li>
           </ul>
+          <p className="text-[#bbb] leading-relaxed mb-4">
+            Papers include real training data — reward curves, convergence
+            plots, evaluation statistics — directly from your experiments.
+            No simulated or hallucinated results.
+          </p>
           <p className="text-[#bbb] leading-relaxed">
-            The generated paper is a starting point — you can download the LaTeX
-            source and edit it further, or continue iterating through the chat
-            interface.
+            You can download the paper as PDF from the Research Lab interface.
+            You can also generate a paper directly from any environment in the
+            Builder using the &quot;Create Paper&quot; button.
           </p>
-        </section>
-
-        {/* ============================================================ */}
-        {/*  API REFERENCE                                               */}
-        {/* ============================================================ */}
-
-        <section id="api-catalog" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">API Reference — Catalog</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            Browse and search published environments in the kualia catalog.
-          </p>
-
-          <Endpoint method="GET" path="/api/rlforge/catalog" desc="List published environments. Supports filtering by domain, difficulty, and text search." />
-          <ParamTable
-            params={[
-              { name: "domain", type: "string", required: false, desc: 'Filter by domain (e.g. "robotics", "finance", "games").' },
-              { name: "difficulty", type: "string", required: false, desc: 'Filter by difficulty: "easy", "medium", "hard".' },
-              { name: "search", type: "string", required: false, desc: "Full-text search across name and description." },
-              { name: "page", type: "integer", required: false, desc: "Page number for pagination. Default: 1." },
-              { name: "limit", type: "integer", required: false, desc: "Results per page. Default: 20, max: 100." },
-            ]}
-          />
-          <CodeBlock language="json">{`// GET /api/rlforge/catalog?domain=robotics&limit=2
-{
-  "environments": [
-    {
-      "id": 42,
-      "slug": "drone-landing-v1",
-      "name": "Drone Landing",
-      "description": "2D drone that must land on a moving platform",
-      "domain": "robotics",
-      "difficulty": "medium",
-      "observation_space": "Box(8,)",
-      "action_space": "Box(2,)",
-      "created_at": "2025-06-15T10:30:00Z"
-    }
-  ],
-  "total": 127,
-  "page": 1
-}`}</CodeBlock>
-
-          <Endpoint method="GET" path="/api/rlforge/catalog/{slug}" desc="Get full details for a specific environment by its slug." />
-          <Endpoint method="GET" path="/api/rlforge/templates" desc="List template environments that serve as starting points for generation." />
-        </section>
-
-        <section id="api-generation" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">API Reference — Generation</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            Generate new environments from natural language, papers, or by forking existing ones.
-          </p>
-
-          <Endpoint method="POST" path="/api/rlforge/generate" desc="Generate a new Gymnasium environment from a natural-language description." />
-          <ParamTable
-            params={[
-              { name: "description", type: "string", required: true, desc: "Natural-language description of the desired environment." },
-              { name: "domain", type: "string", required: false, desc: 'Category hint: "robotics", "finance", "games", etc.' },
-              { name: "difficulty", type: "string", required: false, desc: 'Complexity hint: "easy", "medium", "hard".' },
-            ]}
-          />
-          <CodeBlock language="json">{`// POST /api/rlforge/generate
-// Request
-{
-  "description": "Multi-stock trading with transaction costs and portfolio constraints",
-  "domain": "finance",
-  "difficulty": "hard"
-}
-
-// Response
-{
-  "id": 57,
-  "slug": "multi-stock-trading-v1",
-  "name": "Multi-Stock Trading",
-  "status": "ready",
-  "code": "import gymnasium as gym\\nimport numpy as np\\n...",
-  "observation_space": "Box(30,)",
-  "action_space": "Box(5,)"
-}`}</CodeBlock>
-
-          <Endpoint method="POST" path="/api/rlforge/generate-from-paper" desc="Generate an environment from an uploaded PDF research paper. Multipart form data." />
-          <Endpoint method="POST" path="/api/rlforge/fork/{env_id}" desc="Fork an existing environment and apply modifications." />
-        </section>
-
-        <section id="api-builder" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">API Reference — Builder</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            Interact with the conversational environment builder.
-          </p>
-
-          <Endpoint method="POST" path="/api/rlforge/builder/{id}/chat" desc="Send an iteration message to modify the environment." />
-          <ParamTable
-            params={[
-              { name: "message", type: "string", required: true, desc: "The modification request in natural language." },
-            ]}
-          />
-          <CodeBlock language="json">{`// POST /api/rlforge/builder/42/chat
-// Request
-{ "message": "Change the reward to be distance-based: -1 * distance_to_goal" }
-
-// Response
-{
-  "version": 5,
-  "code": "import gymnasium as gym\\n...",
-  "diff": "@@ -45,3 +45,3 @@\\n-  reward = 1.0 if done else 0.0\\n+  reward = -1.0 * distance_to_goal",
-  "message": "Updated the reward function to be distance-based..."
-}`}</CodeBlock>
-
-          <Endpoint method="GET" path="/api/rlforge/builder/{id}/history" desc="Get the full conversation history and version timeline." />
-          <Endpoint method="POST" path="/api/rlforge/builder/{id}/rollback" desc="Roll back to a specific version." />
-          <Endpoint method="POST" path="/api/rlforge/builder/{id}/export-zip" desc="Download the current environment as a ZIP archive." />
-        </section>
-
-        <section id="api-training" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">API Reference — Training</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            Launch and monitor agent training runs using Stable-Baselines3.
-          </p>
-
-          <Endpoint method="POST" path="/api/rlforge/train/{env_id}" desc="Start a training run. Returns a run ID for tracking." />
-          <ParamTable
-            params={[
-              { name: "algorithm", type: "string", required: false, desc: '"PPO", "SAC", or "DQN". Default: "PPO".' },
-              { name: "total_timesteps", type: "integer", required: false, desc: "Total training steps. Default: 50000." },
-              { name: "learning_rate", type: "float", required: false, desc: "Learning rate. Default: 3e-4." },
-              { name: "seed", type: "integer", required: false, desc: "Random seed for reproducibility." },
-              { name: "continue_from", type: "string", required: false, desc: "Run ID to continue training from." },
-            ]}
-          />
-          <CodeBlock language="json">{`// POST /api/rlforge/train/42
-// Request
-{
-  "algorithm": "SAC",
-  "total_timesteps": 200000,
-  "seed": 42
-}
-
-// Response
-{
-  "run_id": "run_xyz789",
-  "status": "queued",
-  "env_id": 42,
-  "algorithm": "SAC",
-  "total_timesteps": 200000
-}`}</CodeBlock>
-
-          <Endpoint method="GET" path="/api/rlforge/train/{env_id}/status" desc="Get the current status of the latest training run." />
-          <Endpoint method="GET" path="/api/rlforge/train/{env_id}/curve" desc="Get the reward curve data (timesteps, rewards, episode lengths)." />
-          <Endpoint method="GET" path="/api/rlforge/train/{env_id}/model" desc="Download the trained model as a .zip file." />
-        </section>
-
-        <section id="api-research" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">API Reference — Research</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            Create and manage research projects with the experiment pipeline.
-          </p>
-
-          <Endpoint method="POST" path="/api/rlforge/research/projects" desc="Create a new research project." />
-          <ParamTable
-            params={[
-              { name: "title", type: "string", required: true, desc: "Title of the research project." },
-              { name: "description", type: "string", required: false, desc: "Brief description of the research goals." },
-            ]}
-          />
-          <CodeBlock language="json">{`// POST /api/rlforge/research/projects
-// Request
-{
-  "title": "Reward Shaping in Sparse Environments",
-  "description": "Comparing dense vs sparse reward signals across navigation tasks"
-}
-
-// Response
-{
-  "id": "proj_abc123",
-  "title": "Reward Shaping in Sparse Environments",
-  "phase": "hypothesis",
-  "created_at": "2025-07-20T14:00:00Z"
-}`}</CodeBlock>
-
-          <Endpoint method="GET" path="/api/rlforge/research/projects" desc="List all research projects for the authenticated user." />
-          <Endpoint method="GET" path="/api/rlforge/research/projects/{id}" desc="Get full project details including conversation messages." />
-          <Endpoint method="POST" path="/api/rlforge/research/projects/{id}/upload-paper" desc="Upload a reference paper (PDF) to inform the experiment design." />
-        </section>
-
-        {/* ============================================================ */}
-        {/*  PYTHON SDK                                                  */}
-        {/* ============================================================ */}
-
-        <section id="sdk-installation" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">Python SDK — Installation</h2>
-          <p className="text-[#bbb] leading-relaxed mb-4">
-            The kualia Python SDK wraps the REST API into a clean, Pythonic
-            interface. It also provides a Gymnasium-compatible{" "}
-            <code className="text-white bg-[#1a1a1a] px-1.5 py-0.5 rounded text-sm">make()</code> function
-            for using environments directly in your training scripts.
-          </p>
-
-          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Requirements</h3>
-          <ul className="list-disc list-inside text-[#bbb] space-y-1 mb-4 ml-2">
-            <li>Python 3.8+</li>
-            <li>pip or conda</li>
-          </ul>
-
-          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Install via pip</h3>
-          <CodeBlock language="shell">pip install kualia</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Install from source</h3>
-          <CodeBlock language="shell">{`git clone https://github.com/kualia/kualia-python.git
-cd kualia-python
-pip install -e .`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Configuration</h3>
-          <CodeBlock language="python">{`import kualia
-
-# Set your API key (or use KUALIA_API_KEY environment variable)
-kualia.configure(
-    api_key="sk-your-key",
-    api_url="https://kualia.ai",  # default, can be overridden for self-hosted
-)`}</CodeBlock>
-        </section>
-
-        <section id="sdk-usage" className="scroll-mt-24 mb-20">
-          <h2 className="text-2xl font-bold text-white mb-3">Python SDK — Usage Examples</h2>
-
-          <h3 className="text-lg font-semibold text-white mt-6 mb-3">Using catalog environments</h3>
-          <CodeBlock language="python">{`import kualia
-
-kualia.configure(api_key="sk-your-key")
-
-# Browse the catalog
-envs = kualia.catalog.list(domain="robotics", limit=5)
-for env in envs:
-    print(f"{env.slug}: {env.name}")
-
-# Create an environment instance
-env = kualia.make("drone-landing-v1")
-obs, info = env.reset(seed=42)
-
-for step in range(1000):
-    action = env.action_space.sample()
-    obs, reward, terminated, truncated, info = env.step(action)
-    if terminated or truncated:
-        obs, info = env.reset()
-
-env.close()`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">Generating a custom environment</h3>
-          <CodeBlock language="python">{`result = kualia.generate(
-    description="A warehouse robot that picks and places items on shelves",
-    domain="robotics",
-    difficulty="hard",
-)
-print(f"Created: {result.slug} (id={result.id})")
-
-# Iterate on the environment
-kualia.builder.chat(result.id, "Add a battery mechanic: the robot must recharge at a station")
-kualia.builder.chat(result.id, "Make the observation include the battery level")`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">Training with the SDK</h3>
-          <CodeBlock language="python">{`run = kualia.train(
-    env_id=result.id,
-    algorithm="PPO",
-    total_timesteps=200_000,
-    learning_rate=3e-4,
-)
-
-# Wait for training to complete (polls automatically)
-run.wait(poll_interval=5)
-
-print(f"Final mean reward: {run.mean_reward}")
-print(f"Training time: {run.elapsed_seconds}s")
-
-# Download the trained model
-run.download_model("trained_agent.zip")
-
-# Get reward curve for plotting
-curve = run.get_curve()
-# curve.timesteps, curve.rewards, curve.episode_lengths`}</CodeBlock>
-
-          <h3 className="text-lg font-semibold text-white mt-8 mb-3">Full pipeline example</h3>
-          <CodeBlock language="python">{`import kualia
-import matplotlib.pyplot as plt
-
-kualia.configure(api_key="sk-your-key")
-
-# 1. Generate environment
-env_result = kualia.generate("Inverted pendulum with variable mass")
-
-# 2. Refine it
-kualia.builder.chat(env_result.id, "Add Gaussian noise to observations")
-
-# 3. Train multiple algorithms
-runs = {}
-for algo in ["PPO", "SAC"]:
-    runs[algo] = kualia.train(
-        env_id=env_result.id,
-        algorithm=algo,
-        total_timesteps=100_000,
-        seed=42,
-    )
-
-# 4. Wait and compare
-for algo, run in runs.items():
-    run.wait()
-    curve = run.get_curve()
-    plt.plot(curve.timesteps, curve.rewards, label=algo)
-
-plt.xlabel("Timesteps")
-plt.ylabel("Mean Reward")
-plt.legend()
-plt.title("Algorithm Comparison")
-plt.savefig("comparison.png")
-plt.show()`}</CodeBlock>
         </section>
 
         {/* Bottom spacer */}

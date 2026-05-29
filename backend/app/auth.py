@@ -131,6 +131,21 @@ async def get_current_user(request: Request) -> dict:
     }
 
 
+ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "aliveaydin@gmail.com").split(",") if e.strip()]
+
+
+async def require_admin(request: Request) -> dict:
+    """
+    Dependency: requires a valid Clerk JWT from an admin email.
+    Raises 403 if the user is not in ADMIN_EMAILS.
+    """
+    user = await get_current_user(request)
+    email = (user.get("email") or "").lower()
+    if not email or email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 async def get_optional_user(request: Request) -> Optional[dict]:
     """
     Dependency: optionally extracts user from Clerk JWT.

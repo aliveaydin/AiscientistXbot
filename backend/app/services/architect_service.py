@@ -8,6 +8,10 @@ from app.config import settings
 
 logger = logging.getLogger("architect")
 
+# Minimum passing tests (out of 8) for an environment to be considered usable
+# and eligible for publishing. Below this, the env is kept as a draft.
+PASS_THRESHOLD = 6
+
 # ---------------------------------------------------------------------------
 # SYSTEM PROMPT — Core rules for every LLM call
 # ---------------------------------------------------------------------------
@@ -98,6 +102,30 @@ agent — everything the user envisions must be encoded into obs/action/reward.
 2. Box: continuous values (e.g. portfolio weights, torques).
 3. Internally clamp or project invalid actions to valid range — never raise on
    out-of-bounds actions.
+
+=== COMMON PITFALLS (these cause automated tests to FAIL — avoid them) ===
+1. super().__init__(): call it with NO positional args. Use `super().__init__()`
+   (optionally pass nothing). NEVER do `super().__init__(config)` or pass the user
+   config to it — gymnasium.Env.__init__ takes no extra args and this raises
+   "TypeError: object.__init__() takes exactly one argument".
+2. The class MUST be instantiable with ZERO arguments: `Env()`. Give every
+   __init__ parameter a default value (render_mode=None, and any config too).
+3. step() MUST `return obs, reward, terminated, truncated, info` — ALWAYS return
+   the 5-tuple on EVERY path. Never return None, never return a 4-tuple.
+4. The observation returned by reset() AND every step() MUST satisfy
+   observation_space.contains(obs). This means:
+   - dtype must match EXACTLY: build obs with `.astype(self.observation_space.dtype)`
+     (np.float32) and define the Box with dtype=np.float32.
+   - every value must be within [low, high]: clip with
+     `np.clip(obs, self.observation_space.low, self.observation_space.high)`
+     before returning.
+   - shape must match the Box shape exactly.
+5. Reward must VARY across steps (not constant). Build a genuinely dense reward
+   that depends on state/action; tests reject 100 identical rewards.
+6. Determinism: identical seed must reproduce identical trajectories. Use ONLY
+   self.np_random for randomness; reset it via super().reset(seed=seed). Do not
+   read system time, global np.random, or the `random` module.
+7. terminated/truncated must be Python/np bools, reward must be a float.
 
 === OUTPUT FORMAT ===
 Output ONLY valid Python source code.
@@ -367,9 +395,22 @@ Do NOT include any text before or after the JSON. Output ONLY the JSON object.""
 # ---------------------------------------------------------------------------
 
 FIX_PROMPT_TEMPLATE = """The previously generated environment code FAILED the
-following tests:
+automated Gymnasium compatibility tests. Here is exactly what failed:
 
 {test_results}
+
+Use the error messages above to diagnose the ROOT CAUSE of each failure, then
+fix it. Common causes and required fixes:
+- "object.__init__() takes exactly one argument" -> change super().__init__(...)
+  to super().__init__() with no positional args, and give every __init__ param a
+  default so the env is instantiable as Env().
+- "Instantiation error" / "Import error" -> the env must construct with NO args.
+- "obs not contained in observation_space" -> match the Box dtype EXACTLY
+  (np.float32), clip every observation into [low, high], and match the shape.
+- "step() returned ... expected tuple" / NoneType -> ALWAYS return the 5-tuple
+  (obs, reward, terminated, truncated, info) on every code path.
+- "All ... rewards identical" -> make the reward genuinely depend on state/action.
+- "diverge" / determinism -> use ONLY self.np_random (seeded via super().reset).
 
 ORIGINAL ENVIRONMENT SPEC:
 {env_spec}
@@ -377,8 +418,8 @@ ORIGINAL ENVIRONMENT SPEC:
 PREVIOUS CODE:
 {original_code}
 
-Fix ALL failing tests and regenerate the COMPLETE environment code.
-Do NOT omit any part of the code — output the full, corrected file.
+Fix ALL failing tests and regenerate the COMPLETE, corrected environment code.
+Do NOT omit any part of the code — output the full file.
 Output ONLY Python code. No markdown, no explanations."""
 
 # ---------------------------------------------------------------------------
@@ -543,26 +584,14 @@ class ArchitectService:
         max_tokens: int = 4096,
         usage_acc=None,
     ) -> str:
-        """Call an LLM with Claude Opus 4.8 first, then Kimi, then OpenAI."""
-        try:
-            if settings.anthropic_api_key:
-                return await ai_service._call_claude(
-                    system_prompt, user_prompt, model=settings.anthropic_model,
-                    max_tokens=max_tokens, usage_acc=usage_acc,
-                )
-        except Exception as e:
-            logger.warning("Claude Opus 4.8 call failed, trying Kimi: %s", e)
+        """Env generation runs exclusively on Claude Opus 4.8 (mandatory, with retries).
 
-        try:
-            if settings.kimi_api_key:
-                return await ai_service._call_kimi(
-                    system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc,
-                )
-        except Exception as e:
-            logger.warning("Kimi call failed, trying OpenAI: %s", e)
-
-        return await ai_service._call_openai(
-            system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc,
+        No silent fallback to Kimi/GPT — if Opus is genuinely unreachable after
+        retries, the call raises so the failure is loud instead of degrading quality.
+        """
+        return await ai_service._call_claude_strict(
+            system_prompt, user_prompt, model=settings.anthropic_model,
+            max_tokens=max_tokens, usage_acc=usage_acc,
         )
 
     # ------------------------------------------------------------------
@@ -766,6 +795,10 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
     # Error-fix loop (single attempt; caller retries up to 3x)
     # ------------------------------------------------------------------
 
+    # Exposed as an instance attribute so callers can reference
+    # architect_service.PASS_THRESHOLD without importing the module constant.
+    PASS_THRESHOLD = PASS_THRESHOLD
+
     async def fix_env_code(
         self,
         original_code: str,
@@ -799,6 +832,67 @@ instantiable without arguments. Output ONLY valid Python code in this section.""
         logger.info("Attempting to fix env code based on test failures")
         response = await self._call_llm(system, user_prompt, max_tokens=8192, usage_acc=usage_acc)
         return self._extract_code(response)
+
+    @staticmethod
+    def format_test_failures(test_results: Dict[str, Any]) -> str:
+        """Human-readable summary of failing tests for the fix prompt."""
+        passed = test_results.get("passed", 0)
+        total = test_results.get("total", 0)
+        lines = [f"Score: {passed}/{total} tests passed.", "FAILING TESTS:"]
+        for t in test_results.get("tests", []):
+            if t.get("status") == "fail":
+                lines.append(f"- {t.get('name')}: {str(t.get('detail', '')).strip()[:400]}")
+        return "\n".join(lines)
+
+    async def auto_fix_until_passing(
+        self,
+        code: str,
+        spec_json: str,
+        test_results: Dict[str, Any],
+        max_attempts: int = 4,
+        usage_acc=None,
+    ) -> tuple[str, Dict[str, Any], List[str]]:
+        """Iteratively fix env code, always keeping the BEST scoring version.
+
+        Returns (best_code, best_results, log_lines). Fixes are generated from the
+        current best version and re-tested; the highest-scoring code is kept.
+        """
+        from app.services.sandbox_runner import sandbox_runner
+
+        best_code, best_results = code, test_results
+        log_lines = [f"Initial: {best_results.get('passed', 0)}/{best_results.get('total', 0)} tests passed"]
+        attempts = 0
+        no_change_streak = 0
+
+        while (
+            best_results.get("failed", 0) > 0
+            and best_results.get("passed", 0) < best_results.get("total", 0)
+            and attempts < max_attempts
+        ):
+            attempts += 1
+            failure_summary = self.format_test_failures(best_results)
+            try:
+                fixed = await self.fix_env_code(best_code, spec_json, failure_summary, usage_acc=usage_acc)
+            except Exception as e:
+                log_lines.append(f"Fix {attempts}: error calling model ({str(e)[:80]})")
+                break
+
+            if not fixed or fixed.strip() == best_code.strip():
+                no_change_streak += 1
+                log_lines.append(f"Fix {attempts}: model returned no change")
+                if no_change_streak >= 2:
+                    break
+                continue
+
+            no_change_streak = 0
+            new_results = await sandbox_runner.run_all_tests(fixed)
+            log_lines.append(f"Fix {attempts}: {new_results['passed']}/{new_results['total']} tests passed")
+            if new_results.get("passed", 0) >= best_results.get("passed", 0):
+                best_code, best_results = fixed, new_results
+            if best_results.get("passed", 0) == best_results.get("total", 0):
+                break
+
+        return best_code, best_results, log_lines
 
     # ------------------------------------------------------------------
     # Conversation / iterate mode (Environment Builder)

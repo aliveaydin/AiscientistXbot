@@ -3,8 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-import { Box, Plus, Loader2, ExternalLink, Sparkles } from "lucide-react";
-import { getMyEnvironments } from "@/lib/api";
+import { Box, Plus, Loader2, ExternalLink, Sparkles, Trash2 } from "lucide-react";
+import { getMyEnvironments, deleteEnvironment } from "@/lib/api";
 import { CreateEnvForm } from "@/components/CreateEnvForm";
 import { CreateEnvModal } from "@/components/CreateEnvModal";
 
@@ -22,7 +22,7 @@ export default function DashboardEnvironmentsPage() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
-  const perPage = 20;
+  const perPage = 10;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -158,13 +158,27 @@ export default function DashboardEnvironmentsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex items-center justify-end gap-3">
                         <Link
                           href={`/builder/${env.id}`}
                           className="text-xs text-[#888] hover:text-white transition-colors flex items-center gap-1"
                         >
                           <ExternalLink className="w-3 h-3" /> Open
                         </Link>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (!confirm(`Delete "${env.name}"? This will also remove all training data.`)) return;
+                            try {
+                              await deleteEnvironment(env.id);
+                              load();
+                            } catch (err) { console.error(err); }
+                          }}
+                          className="text-[#444] hover:text-red-500 transition-colors"
+                          title="Delete environment"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>

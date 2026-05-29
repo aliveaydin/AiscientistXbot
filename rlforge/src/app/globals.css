@@ -94,3 +94,124 @@ body {
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
   height: 1px;
 }
+
+/* ── Clerk auth modal overrides ── */
+.cl-card { background: #0a0a0a !important; border: 1px solid #27272a !important; }
+.cl-headerTitle { color: #ffffff !important; font-weight: 700 !important; }
+.cl-headerSubtitle { color: #d4d4d8 !important; }
+.cl-dividerText { color: #a1a1aa !important; }
+.cl-dividerLine { background: #3f3f46 !important; }
+.cl-formFieldLabel { color: #e4e4e7 !important; }
+.cl-formFieldInput {
+  background: #18181b !important;
+  border-color: #3f3f46 !important;
+  color: #ffffff !important;
+}
+.cl-formFieldInput::placeholder { color: #71717a !important; }
+.cl-formButtonPrimary {
+  background: #ffffff !important;
+  color: #000000 !important;
+  font-weight: 600 !important;
+}
+.cl-formButtonPrimary:hover { background: #e4e4e7 !important; }
+.cl-socialButtonsBlockButton {
+  background: #18181b !important;
+  border: 1px solid #3f3f46 !important;
+}
+.cl-socialButtonsBlockButton:hover {
+  background: #27272a !important;
+  border-color: #52525b !important;
+}
+.cl-socialButtonsBlockButtonText { color: #ffffff !important; font-weight: 500 !important; }
+.cl-footerActionText { color: #a1a1aa !important; }
+.cl-footerActionLink { color: #ffffff !important; font-weight: 600 !important; }
+.cl-footerActionLink:hover { color: #d4d4d8 !important; }
+.cl-formFieldAction { color: #a1a1aa !important; }
+.cl-formFieldAction:hover { color: #ffffff !important; }
+.cl-internal-b3fm6y { color: #d4d4d8 !important; }
+.cl-footer { color: #a1a1aa !important; }
+.cl-footer a { color: #a1a1aa !important; }
+.cl-identityPreview { color: #ffffff !important; }
+.cl-identityPreviewText { color: #ffffff !important; }
+.cl-identityPreviewEditButton { color: #a1a1aa !important; }
+.cl-identityPreviewEditButton:hover { color: #ffffff !important; }
+.cl-formFieldInputShowPasswordButton { color: #a1a1aa !important; }
+.cl-formFieldInputShowPasswordButton:hover { color: #ffffff !important; }
+.cl-userButtonPopoverCard { background: #0a0a0a !important; border: 1px solid #27272a !important; }
+.cl-userButtonPopoverActionButton { color: #d4d4d8 !important; }
+.cl-userButtonPopoverActionButton:hover { background: #18181b !important; }
+.cl-userPreviewMainIdentifier { color: #ffffff !important; }
+.cl-userPreviewSecondaryIdentifier { color: #a1a1aa !important; }
+.cl-modalCloseButton { color: #a1a1aa !important; }
+.cl-modalCloseButton:hover { color: #ffffff !important; }
+
+/* ── Clerk UserProfile (settings page) overrides ── */
+.cl-rootBox { color: #ffffff !important; }
+.cl-profilePage { color: #ffffff !important; }
+.cl-page { color: #ffffff !important; }
+.cl-pageScrollBox { color: #ffffff !important; }
+.cl-profileSection { color: #ffffff !important; }
+.cl-profileSectionTitle { border-bottom: 1px solid #27272a !important; }
+.cl-profileSectionTitleText { color: #ffffff !important; font-weight: 600 !important; }
+.cl-profileSectionSubtitle,
+.cl-profileSectionSubtitleText { color: #a1a1aa !important; }
+.cl-profileSectionContent { color: #d4d4d8 !important; }
+.cl-profileSectionPrimaryButton { color: #a1a1aa !important; }
+.cl-profileSectionPrimaryButton:hover { color: #ffffff !important; }
+.cl-profileSectionPrimaryButton__profile,
+.cl-profileSectionPrimaryButton__emailAddresses,
+.cl-profileSectionPrimaryButton__connectedAccounts,
+.cl-profileSectionPrimaryButton__password,
+.cl-profileSectionPrimaryButton__activeDevices { color: #a1a1aa !important; }
+.cl-profileSectionPrimaryButton__profile:hover,
+.cl-profileSectionPrimaryButton__emailAddresses:hover,
+.cl-profileSectionPrimaryButton__connectedAccounts:hover,
+.cl-profileSectionPrimaryButton__password:hover,
+.cl-profileSectionPrimaryButton__activeDevices:hover { color: #ffffff !important; }
+.cl-userPreview { color: #ffffff !important; }
+.cl-userPreviewMainIdentifier { color: #ffffff !important; }
+.cl-userPreviewSecondaryIdentifier { color: #a1a1aa !important; }
+.cl-userPreviewTextContainer { color: #ffffff !important; }
+.cl-badge { background: #27272a !important; color: #a1a1aa !important; border-color: #3f3f46 !important; }
+.cl-badge__primary { background: #18181b !important; color: #d4d4d8 !important; }
+.cl-navbar { background: transparent !important; border-color: #27272a !important; }
+.cl-navbarButton { color: #a1a1aa !important; }
+.cl-navbarButton:hover,
+.cl-navbarButton[data-active="true"] { color: #ffffff !important; }
+.cl-navbarButtonIcon { color: inherit !important; }
+.cl-accordionTriggerButton { color: #d4d4d8 !important; }
+.cl-accordionTriggerButton:hover { color: #ffffff !important; }
+.cl-accordionContent { color: #d4d4d8 !important; }
+.cl-menuButton { color: #a1a1aa !important; }
+.cl-menuButton:hover { color: #ffffff !important; }
+.cl-menuList { background: #0a0a0a !important; border: 1px solid #27272a !important; }
+.cl-menuItem { color: #d4d4d8 !important; }
+.cl-menuItem:hover { color: #ffffff !important; background: #18181b !important; }
+.cl-breadcrumbs { color: #a1a1aa !important; }
+.cl-breadcrumbsItem { color: #a1a1aa !important; }
+.cl-breadcrumbsItem__currentPage { color: #ffffff !important; }
+.cl-breadcrumbsItemDivider { color: #52525b !important; }
+.cl-formFieldLabel { color: #d4d4d8 !important; }
+.cl-formFieldAction { color: #a1a1aa !important; }
+.cl-formFieldAction:hover { color: #ffffff !important; }
+.cl-formButtonReset { color: #a1a1aa !important; }
+.cl-formButtonReset:hover { color: #ffffff !important; }
+.cl-avatarBox { border-color: #3f3f46 !important; }
+.cl-avatarImageActionsUpload { color: #a1a1aa !important; }
+.cl-avatarImageActionsUpload:hover { color: #ffffff !important; }
+.cl-activeDevice { color: #d4d4d8 !important; border-color: #27272a !important; }
+.cl-activeDeviceListItem { color: #d4d4d8 !important; }
+.cl-activeDevice__current { border-color: #3f3f46 !important; }
+.cl-tagPrimaryIdentifier { color: #d4d4d8 !important; }
+.cl-tagInputContainer { background: #18181b !important; border-color: #3f3f46 !important; }
+
+/* Force all Clerk internal text elements to be readable */
+[class*="cl-internal"] { color: #d4d4d8 !important; }
+[class*="cl-internal"]:is(h1, h2, h3, h4) { color: #ffffff !important; }
+.cl-card p, .cl-card span, .cl-card div,
+.cl-profilePage p, .cl-profilePage span, .cl-profilePage div,
+.cl-pageScrollBox p, .cl-pageScrollBox span { color: inherit; }
+.cl-card h1, .cl-card h2, .cl-card h3,
+.cl-profilePage h1, .cl-profilePage h2, .cl-profilePage h3 { color: #ffffff !important; }
+.cl-card [data-localization-key] { color: #d4d4d8 !important; }
+.cl-card [data-localization-key*="title"] { color: #ffffff !important; }

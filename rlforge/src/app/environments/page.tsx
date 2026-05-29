@@ -50,15 +50,14 @@ export default async function EnvironmentsPage() {
             AI-Generated Gymnasium Environments
           </span>
         </div>
-        <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-5xl">
+        <h1 className="text-3xl sm:text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-5xl">
           RL Environment Generation
           <br />
           <span className="text-[#555]">powered by AI.</span>
         </h1>
         <p className="text-xl md:text-2xl text-[#888] mt-6 max-w-2xl leading-relaxed">
-          Describe what you need. Get validated Gymnasium code.
-          <br />
-          Train agents. Track experiments. Export results.
+          Describe what you need. Train agents.<br />
+          Track experiments. Export results.
         </p>
         <div className="flex flex-wrap gap-4 mt-10 justify-center">
           <Link
@@ -80,9 +79,9 @@ export default async function EnvironmentsPage() {
             { label: "Gymnasium v0.29+", icon: <Layers size={12} /> },
             { label: "8 Automated Tests", icon: <TestTubeDiagonal size={12} /> },
             { label: "PPO / SAC / DQN", icon: <Zap size={12} /> },
-            { label: "PDF Reports", icon: <FileDown size={12} /> },
-            { label: "Version Control", icon: <GitBranch size={12} /> },
-            { label: "ZIP & GitHub Export", icon: <Package size={12} /> },
+            { label: "Continue / Fine-Tune / Curriculum", icon: <Play size={12} /> },
+            { label: "AI Smart Suggestions", icon: <Brain size={12} /> },
+            { label: "GitHub Export", icon: <GitBranch size={12} /> },
           ].map((c) => (
             <span
               key={c.label}
@@ -97,9 +96,9 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── What is an RL Environment? ────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
             What is an RL Environment?
           </h2>
           <p className="text-[#888] max-w-2xl mx-auto leading-relaxed">
@@ -157,9 +156,9 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── How It Works ─────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">How It Works</h2>
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">How It Works</h2>
           <p className="text-[#888] max-w-2xl mx-auto leading-relaxed">
             From natural language to a trained agent in five steps. No
             boilerplate. No setup headaches.
@@ -194,14 +193,14 @@ export default async function EnvironmentsPage() {
               {
                 num: "04",
                 title: "Iterate",
-                desc: "Chat with the AI to refine reward functions, dynamics, and observations. Every change versioned.",
+                desc: "Chat with the AI or use smart suggestions to refine rewards, dynamics, and observations. Every change versioned.",
                 icon: <IterationCcw size={18} />,
                 color: "text-purple-400",
               },
               {
                 num: "05",
                 title: "Train",
-                desc: "One-click agent training with PPO, SAC, or DQN. Live metrics, reward curves, and experiment reports.",
+                desc: "Continue, Fine-Tune, or Curriculum modes with configurable hyperparameters. Live metrics and experiment reports.",
                 icon: <Play size={18} />,
                 color: "text-red-400",
               },
@@ -239,9 +238,9 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── Builder Features ─────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
             Builder Features
           </h2>
           <p className="text-[#888] max-w-2xl mx-auto leading-relaxed">
@@ -269,8 +268,8 @@ export default async function EnvironmentsPage() {
 
           <FeatureCard
             icon={<IterationCcw size={20} className="text-purple-400" />}
-            title="Chat-Based Iteration"
-            description='Refine your environment through conversation. Say "add wind noise" or "change the reward to be sparse" and the AI rewrites the code while preserving your existing logic.'
+            title="Chat & AI Smart Suggestions"
+            description="Refine your environment through conversation or use AI-driven smart suggestions that analyze your env and training results to recommend next steps — like increasing difficulty, tuning rewards, or trying different algorithms."
           >
             <MockChatIteration />
           </FeatureCard>
@@ -288,9 +287,9 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── Training & Experiments ────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
             Training & Experiments
           </h2>
           <p className="text-[#888] max-w-2xl mx-auto leading-relaxed">
@@ -316,20 +315,21 @@ export default async function EnvironmentsPage() {
               ))}
             </div>
             <h3 className="text-xl font-bold">
-              One-Click Agent Training
+              Advanced Training Modes
             </h3>
             <p className="text-sm text-[#888] leading-relaxed max-w-md">
-              Choose an algorithm, set hyperparameters, and hit train.
-              Stable Baselines3 handles the rest. Watch live progress with
-              real-time reward curves, episode length, success rate, and
-              policy loss.
+              Choose an algorithm, configure hyperparameters (learning rate, batch size,
+              gamma, network architecture), and select a training mode.
+              <strong className="text-white"> Continue</strong> resumes from checkpoints,
+              <strong className="text-white"> Fine-Tune</strong> uses low LR for refinement, and
+              <strong className="text-white"> Curriculum</strong> auto-increases environment difficulty.
             </p>
             <div className="grid grid-cols-2 gap-3 max-w-sm">
               {[
                 { icon: <Activity size={14} />, label: "Live reward curves" },
                 { icon: <Clock size={14} />, label: "ETA & progress bar" },
-                { icon: <TrendingUp size={14} />, label: "Success rate tracking" },
-                { icon: <BarChart3 size={14} />, label: "Loss visualization" },
+                { icon: <TrendingUp size={14} />, label: "Curriculum learning" },
+                { icon: <BarChart3 size={14} />, label: "Configurable hyperparams" },
               ].map((f) => (
                 <div
                   key={f.label}
@@ -353,15 +353,15 @@ export default async function EnvironmentsPage() {
             </h3>
             <p className="text-sm text-[#888] leading-relaxed max-w-md">
               Each training run is an experiment linked to a specific environment
-              version. Compare runs side-by-side, inspect hyperparameters,
-              and export everything as a detailed PDF report.
+              version. Expandable experiment history with full metrics, compare runs
+              side-by-side, and export to GitHub or download reports.
             </p>
             <div className="space-y-2">
               {[
                 "Side-by-side run comparison with metric diffs",
-                "Hyperparameter logging for every experiment",
-                "Environment version tracking across runs",
-                "PDF export for papers and documentation",
+                "Configurable hyperparameters: LR, batch size, gamma, net arch",
+                "Environment version tracking across training modes",
+                "GitHub export and PDF reports for documentation",
               ].map((item) => (
                 <div
                   key={item}
@@ -385,9 +385,9 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── Template Environments ─────────────────── */}
-      <section id="templates" className="max-w-6xl mx-auto px-6 py-24">
+      <section id="templates" className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-16">
-          <h2 className="text-3xl md:text-4xl font-bold mb-4">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
             Template Environments
           </h2>
           <p className="text-[#888] max-w-2xl mx-auto leading-relaxed">
@@ -463,8 +463,8 @@ export default async function EnvironmentsPage() {
       <div className="line-glow" />
 
       {/* ── CTA ──────────────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24 text-center">
-        <h2 className="text-3xl md:text-4xl font-bold mb-4">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24 text-center">
+        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">
           Ready to build your environment?
         </h2>
         <p className="text-[#666] mb-10 max-w-md mx-auto">
@@ -891,12 +891,19 @@ function MockChatIteration() {
           </p>
         </div>
       </div>
-      <div className="border-t border-[#1a1a1a] p-2 flex gap-1.5">
-        <div className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2.5 py-1.5 text-[10px] text-[#555]">
-          Describe changes...
+      <div className="border-t border-[#1a1a1a] p-2 space-y-1.5">
+        <div className="flex flex-wrap gap-1">
+          {["Increase difficulty", "Make rewards denser", "Try SAC algorithm", "Add noise to obs"].map(s => (
+            <span key={s} className="text-[8px] px-2 py-1 border border-[#222] rounded-full text-[#666] hover:text-white hover:border-[#444] cursor-pointer transition-colors">{s}</span>
+          ))}
         </div>
-        <div className="px-2 py-1.5 bg-white rounded">
-          <Send size={10} className="text-black" />
+        <div className="flex gap-1.5">
+          <div className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2.5 py-1.5 text-[10px] text-[#555]">
+            Describe changes...
+          </div>
+          <div className="px-2 py-1.5 bg-white rounded">
+            <Send size={10} className="text-black" />
+          </div>
         </div>
       </div>
     </div>
@@ -992,12 +999,26 @@ function MockTraining() {
         <MiniChart data={lossData} label="Policy Loss" value="0.63" color="#ef4444" />
       </div>
 
-      <div className="border-t border-[#1a1a1a] px-4 py-2 flex gap-4 text-[9px] text-[#555]">
-        <span>Step: 73,500</span>
-        <span>Episodes: 1,247</span>
-        <span>FPS: 4,280</span>
-        <span>ETA: 6s</span>
-        <span className="ml-auto font-mono text-[#888]">PPO</span>
+      <div className="border-t border-[#1a1a1a] px-3 py-2">
+        <div className="flex gap-1.5 mb-2">
+          {[
+            { label: "Continue", desc: "Resume training", active: true },
+            { label: "Fine-Tune", desc: "Low LR, short", active: false },
+            { label: "Curriculum", desc: "Auto-difficulty", active: false },
+          ].map(m => (
+            <div key={m.label} className={`flex-1 rounded-lg p-1.5 text-center border ${m.active ? "border-white bg-[#1a1a1a]" : "border-[#1a1a1a]"}`}>
+              <div className={`text-[9px] font-medium ${m.active ? "text-white" : "text-[#555]"}`}>{m.label}</div>
+              <div className="text-[8px] text-[#444]">{m.desc}</div>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-4 text-[9px] text-[#555]">
+          <span>Step: 73,500</span>
+          <span>Episodes: 1,247</span>
+          <span>FPS: 4,280</span>
+          <span>ETA: 6s</span>
+          <span className="ml-auto font-mono text-[#888]">PPO</span>
+        </div>
       </div>
     </div>
   );

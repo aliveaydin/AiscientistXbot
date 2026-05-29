@@ -12,7 +12,7 @@ from datetime import datetime
 
 from app.database import get_db
 from app.auth import get_current_user, get_optional_user
-from app.models import User, RLEnvironment, TrainingRun, ResearchProject
+from app.models import User, RLEnvironment, TrainingRun, ResearchProject, SubscriptionPlan, CreditTransaction
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -36,23 +36,92 @@ async def _get_or_create_user(db: AsyncSession, clerk_user_id: str, email: Optio
     result = await db.execute(select(User).where(User.clerk_id == clerk_user_id))
     user = result.scalar_one_or_none()
     if user:
+        # Auto-assign Free plan to existing users who don't have one
+        if not user.plan_id:
+            free_plan = (await db.execute(
+                select(SubscriptionPlan).where(SubscriptionPlan.name == "free")
+            )).scalar_one_or_none()
+            if free_plan:
+                WELCOME_CREDIT = 5.0
+                user.plan_id = free_plan.id
+                if (user.credit_balance or 0) == 0:
+                    user.credit_balance = WELCOME_CREDIT
+                    tx = CreditTransaction(
+                        user_id=user.id,
+                        amount=WELCOME_CREDIT,
+                        balance_after=user.credit_balance,
+                        operation="welcome_credit",
+                        details_json='{"plan": "free", "reason": "plan_migration"}',
+                    )
+                    db.add(tx)
+                user.plan_started_at = datetime.utcnow()
+                await db.commit()
+                await db.refresh(user)
         return user
 
     # Auto-generate a username from clerk_id
     base_username = f"user_{clerk_user_id[-8:]}"
+
+    # Find the Free plan
+    free_plan = (await db.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.name == "free")
+    )).scalar_one_or_none()
+
+    WELCOME_CREDIT = 5.0
     user = User(
         clerk_id=clerk_user_id,
         email=email,
         username=base_username,
         display_name=base_username,
+        plan_id=free_plan.id if free_plan else None,
+        credit_balance=WELCOME_CREDIT if free_plan else 0,
+        plan_started_at=datetime.utcnow(),
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    if free_plan:
+        tx = CreditTransaction(
+            user_id=user.id,
+            amount=WELCOME_CREDIT,
+            balance_after=user.credit_balance,
+            operation="welcome_credit",
+            details_json='{"plan": "free", "reason": "new_user_signup"}',
+        )
+        db.add(tx)
+        await db.commit()
+
+    # Send welcome email (fire-and-forget)
+    if email:
+        try:
+            from app.services.email_service import email_service
+            await email_service.send_transactional(
+                to=email, template="welcome", data={}, user_id=user.id,
+            )
+        except Exception:
+            pass
+
     return user
 
 
-def _serialize_user(user: User) -> dict:
+async def _serialize_user(user: User, db: AsyncSession) -> dict:
+    plan_info = None
+    if user.plan_id:
+        plan = (await db.execute(
+            select(SubscriptionPlan).where(SubscriptionPlan.id == user.plan_id)
+        )).scalar_one_or_none()
+        if plan:
+            plan_info = {
+                "name": plan.name,
+                "display_name": plan.display_name,
+                "price_monthly": plan.price_monthly,
+                "monthly_credits": plan.monthly_credits,
+                "max_environments": plan.max_environments,
+                "max_training_steps": plan.max_training_steps,
+                "pdf_download": plan.pdf_download,
+                "github_export": plan.github_export,
+            }
     return {
         "id": user.id,
         "clerk_id": user.clerk_id,
@@ -61,6 +130,8 @@ def _serialize_user(user: User) -> dict:
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "bio": user.bio,
+        "credit_balance": round(user.credit_balance or 0, 4),
+        "plan": plan_info,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -101,7 +172,7 @@ async def sync_user(
         await db.commit()
         await db.refresh(user)
 
-    return _serialize_user(user)
+    return await _serialize_user(user, db)
 
 
 @router.get("/me")
@@ -111,7 +182,7 @@ async def get_me(
 ):
     """Get the current authenticated user's profile."""
     user = await _get_or_create_user(db, auth["clerk_user_id"], auth.get("email"))
-    return _serialize_user(user)
+    return await _serialize_user(user, db)
 
 
 @router.patch("/me")
@@ -138,7 +209,7 @@ async def update_me(
     user.updated_at = datetime.utcnow()
     await db.commit()
     await db.refresh(user)
-    return _serialize_user(user)
+    return await _serialize_user(user, db)
 
 
 @router.get("/me/environments")
@@ -296,6 +367,25 @@ async def get_my_research(
     }
 
 
+@router.get("/plans")
+async def list_plans(db: AsyncSession = Depends(get_db)):
+    """List all available subscription plans (public)."""
+    result = await db.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.price_monthly)
+    )
+    plans = result.scalars().all()
+    return [
+        {
+            "id": p.id, "name": p.name, "display_name": p.display_name,
+            "price_monthly": p.price_monthly, "monthly_credits": p.monthly_credits,
+            "max_environments": p.max_environments, "max_training_steps": p.max_training_steps,
+            "pdf_download": p.pdf_download, "github_export": p.github_export,
+            "can_buy_credits": p.can_buy_credits,
+        }
+        for p in plans
+    ]
+
+
 @router.get("/{username}")
 async def get_public_profile(
     username: str,
@@ -342,4 +432,111 @@ async def get_public_profile(
             for e in envs
         ],
         "research_count": research_count,
+    }
+
+
+# ─── Credit & Subscription Endpoints ───
+
+@router.get("/me/credits")
+async def get_credits(auth: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.services.credit_service import credit_service
+    user = await _get_or_create_user(db, auth["clerk_user_id"], auth.get("email"))
+    balance = await credit_service.get_balance(user.id, db)
+    plan = await credit_service.get_plan(user.id, db)
+    monthly = await credit_service.get_monthly_usage(user.id, db)
+    return {
+        "balance": round(balance, 4),
+        "plan": plan,
+        "monthly_usage": monthly,
+    }
+
+
+@router.get("/me/credit-history")
+async def get_credit_history(
+    limit: int = 50,
+    offset: int = 0,
+    auth: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.credit_service import credit_service
+    user = await _get_or_create_user(db, auth["clerk_user_id"], auth.get("email"))
+    return await credit_service.get_usage_history(user.id, db, limit=limit, offset=offset)
+
+
+@router.get("/me/subscription")
+async def get_subscription(
+    auth: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Full subscription overview: plan, usage, limits, history."""
+    from app.services.credit_service import credit_service, ADMIN_EMAILS
+
+    user = await _get_or_create_user(db, auth["clerk_user_id"], auth.get("email"))
+    is_admin = bool(user.email and user.email.lower() in [e.lower() for e in ADMIN_EMAILS])
+
+    plan = await credit_service.get_plan(user.id, db)
+    monthly = await credit_service.get_monthly_usage(user.id, db)
+
+    env_count = (await db.execute(
+        select(func.count(RLEnvironment.id)).where(RLEnvironment.user_id == user.id)
+    )).scalar() or 0
+
+    research_count = (await db.execute(
+        select(func.count(ResearchProject.id)).where(ResearchProject.user_id == user.id)
+    )).scalar() or 0
+
+    from app.models import TrainingRun
+    training_count = (await db.execute(
+        select(func.count(TrainingRun.id))
+        .join(RLEnvironment, TrainingRun.env_id == RLEnvironment.id)
+        .where(RLEnvironment.user_id == user.id)
+    )).scalar() or 0
+
+    all_plans = (await db.execute(
+        select(SubscriptionPlan).where(SubscriptionPlan.is_active == True).order_by(SubscriptionPlan.price_monthly)
+    )).scalars().all()
+
+    recent_tx = (await db.execute(
+        select(CreditTransaction)
+        .where(CreditTransaction.user_id == user.id)
+        .order_by(CreditTransaction.created_at.desc())
+        .limit(20)
+    )).scalars().all()
+
+    return {
+        "is_admin": is_admin,
+        "balance": round(user.credit_balance or 0, 4),
+        "plan": plan,
+        "plan_started_at": user.plan_started_at.isoformat() if user.plan_started_at else None,
+        "plan_period_end": user.plan_period_end.isoformat() if user.plan_period_end else None,
+        "usage": {
+            "environments": env_count,
+            "training_runs": training_count,
+            "research_projects": research_count,
+            "monthly": monthly,
+        },
+        "limits": {
+            "max_environments": plan["max_environments"] if plan else 3,
+            "max_training_steps": plan["max_training_steps"] if plan else 50000,
+            "pdf_download": plan["pdf_download"] if plan else False,
+            "github_export": plan["github_export"] if plan else False,
+            "can_buy_credits": plan["can_buy_credits"] if plan else False,
+        },
+        "available_plans": [
+            {
+                "id": p.id, "name": p.name, "display_name": p.display_name,
+                "price_monthly": p.price_monthly, "monthly_credits": p.monthly_credits,
+                "max_environments": p.max_environments, "max_training_steps": p.max_training_steps,
+                "pdf_download": p.pdf_download, "github_export": p.github_export,
+                "can_buy_credits": p.can_buy_credits,
+            }
+            for p in all_plans
+        ],
+        "recent_transactions": [{
+            "id": t.id,
+            "amount": t.amount,
+            "balance_after": t.balance_after,
+            "operation": t.operation,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+        } for t in recent_tx],
     }

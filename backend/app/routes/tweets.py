@@ -11,9 +11,11 @@ from app.services.twitter_service import twitter_service
 from app.services.article_service import ArticleService
 from typing import Optional
 
+from app.auth import require_admin
+
 logger = logging.getLogger("tweets")
 
-router = APIRouter(prefix="/api/tweets", tags=["Tweets"])
+router = APIRouter(prefix="/api/tweets", tags=["Tweets"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/", response_model=list[TweetResponse])

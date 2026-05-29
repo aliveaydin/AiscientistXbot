@@ -83,19 +83,12 @@ class LabService:
         from app.services.ai_service import ai_service
         from app.config import settings as _settings
         acc = usage_acc or _active_usage_acc.get(None)
-        # Primary model for all Research Lab agents: Claude Opus 4.8.
-        if _settings.anthropic_api_key:
-            try:
-                return await ai_service._call_claude(system_prompt, user_prompt, model=_settings.anthropic_model, max_tokens=max_tokens, usage_acc=acc)
-            except Exception:
-                pass
-        # Fallbacks (only if Claude is unavailable): Kimi -> OpenAI.
-        if _settings.kimi_api_key:
-            try:
-                return await ai_service._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=acc)
-            except Exception:
-                pass
-        return await ai_service._call_openai(system_prompt, user_prompt, max_tokens=min(max_tokens, 4096), usage_acc=acc)
+        # All Research Lab agents (analysis, hypotheses, paper writing, review)
+        # run exclusively on Claude Opus 4.8 — mandatory, with retries, no fallback.
+        return await ai_service._call_claude_strict(
+            system_prompt, user_prompt, model=_settings.anthropic_model,
+            max_tokens=max_tokens, usage_acc=acc,
+        )
 
     # ── Data Helpers ─────────────────────────────────────────────
 
@@ -488,6 +481,7 @@ class LabService:
         logger.info(f"[Lab] DESIGN phase for project {project.id}")
         from app.services.architect_service import architect_service
         from app.services.sandbox_runner import sandbox_runner
+        from app.config import settings as _lab_settings
 
         plan = self._parse_research_plan(project.selected_idea or "")
         env_specs = plan.get("environments", [])
@@ -583,19 +577,9 @@ class LabService:
                     raise ValueError("No code generated")
 
                 test_results = await sandbox_runner.run_all_tests(code)
-                log_lines = [f"Initial: {test_results['passed']}/{test_results['total']} tests passed"]
-
-                attempts = 0
-                max_fix = 2 if test_results["passed"] < 6 else 1
-                while test_results["failed"] > 0 and attempts < max_fix:
-                    attempts += 1
-                    fixed = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results))
-                    if fixed and fixed != code:
-                        code = fixed
-                        test_results = await sandbox_runner.run_all_tests(code)
-                        log_lines.append(f"Fix {attempts}: {test_results['passed']}/{test_results['total']} tests passed")
-                    else:
-                        break
+                code, test_results, log_lines = await architect_service.auto_fix_until_passing(
+                    code, spec_json, test_results, max_attempts=4,
+                )
 
                 final_name = env_name if env_name and env_name != "custom-env" else gen.get("name", env_name)
                 if final_name in ("custom-env", "CustomEnv", "custom_env") or not final_name:
@@ -618,7 +602,8 @@ class LabService:
                     env_spec_json=spec_json,
                     test_results_json=json.dumps(test_results),
                     difficulty=env_difficulty,
-                    status="published",
+                    status="published" if test_results.get("passed", 0) >= architect_service.PASS_THRESHOLD else "draft",
+                    ai_model_used=_lab_settings.anthropic_model,
                     generation_log="\n".join(log_lines),
                     user_id=project.user_id,
                     research_project_id=project.id,

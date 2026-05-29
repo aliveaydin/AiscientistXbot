@@ -192,21 +192,10 @@ async def generate_env(
     log_lines.append(f"[code] Generated {len(code)} chars of code")
 
     test_results = await sandbox_runner.run_all_tests(code)
-    log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed")
-
-    max_fix_attempts = 3 if test_results["passed"] < 6 else 2
-    attempts = 0
-    while test_results["failed"] > 0 and attempts < max_fix_attempts:
-        attempts += 1
-        log_lines.append(f"[fix] Attempt {attempts}: fixing {test_results['failed']} failed tests")
-        fixed_code = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results), usage_acc=usage_acc)
-        if fixed_code and fixed_code != code:
-            code = fixed_code
-            test_results = await sandbox_runner.run_all_tests(code)
-            log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed after fix {attempts}")
-        else:
-            log_lines.append(f"[fix] No change from fix attempt {attempts}")
-            break
+    code, test_results, fix_log = await architect_service.auto_fix_until_passing(
+        code, spec_json, test_results, max_attempts=4, usage_acc=usage_acc,
+    )
+    log_lines.extend(f"[fix] {line}" for line in fix_log)
 
     detected_domain = gen.get("domain") or (domain if domain else "custom")
     slug_base = _slugify(gen.get("name", description[:50]))
@@ -1532,21 +1521,14 @@ async def get_suggestions(request: Request, env_id: int, db: AsyncSession = Depe
 
     from app.services.ai_service import ai_service
     try:
-        response = await ai_service._call_claude(
+        response = await ai_service._call_claude_strict(
             "You are an RL advisor. Return only valid JSON arrays.",
             prompt,
             model=settings.anthropic_model,
             max_tokens=2000,
         )
     except Exception:
-        try:
-            response = await ai_service._call_kimi(
-                "You are an RL advisor. Return only valid JSON arrays.",
-                prompt,
-                max_tokens=2000,
-            )
-        except Exception:
-            return []
+        return []
 
     import re as _re
     match = _re.search(r'\[.*\]', response, _re.DOTALL)

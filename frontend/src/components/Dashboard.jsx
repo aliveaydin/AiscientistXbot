@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Send, Heart, Repeat2, Eye, MessageCircle, FileText,
-  TrendingUp, Clock, Zap, Activity
+  TrendingUp, Clock, Zap, Activity, Users, Box, FlaskConical, ScrollText, Cpu,
+  Megaphone, Target, UserPlus
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { getDashboardStats, getActivityLogs, getChartData } from '../api';
+import { getDashboardStats, getActivityLogs, getChartData, getAdminStats, getMarketingStats } from '../api';
 
 function StatCard({ icon: Icon, label, value, color, subtext }) {
   return (
@@ -35,26 +36,32 @@ function StatusBadge({ status }) {
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
+  const [platformStats, setPlatformStats] = useState(null);
+  const [marketingStats, setMarketingStats] = useState(null);
   const [activity, setActivity] = useState([]);
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 30000); // refresh every 30s
+    const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   const loadData = async () => {
     try {
-      const [statsRes, activityRes, chartRes] = await Promise.all([
+      const [statsRes, activityRes, chartRes, platformRes, mktRes] = await Promise.all([
         getDashboardStats(),
         getActivityLogs(20),
         getChartData(7),
+        getAdminStats(),
+        getMarketingStats().catch(() => ({ data: null })),
       ]);
       setStats(statsRes.data);
       setActivity(activityRes.data);
       setChartData(chartRes.data);
+      setPlatformStats(platformRes.data);
+      setMarketingStats(mktRes.data);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
     } finally {
@@ -84,12 +91,45 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Send} label="Total Tweets" value={stats?.total_tweets} color="blue" subtext={`${stats?.tweets_today || 0} today`} />
-        <StatCard icon={Heart} label="Total Likes" value={stats?.total_likes} color="rose" />
-        <StatCard icon={Repeat2} label="Total Retweets" value={stats?.total_retweets} color="emerald" />
-        <StatCard icon={Eye} label="Impressions" value={stats?.total_impressions} color="purple" />
+      {/* Platform Stats */}
+      {platformStats && (
+        <>
+          <div>
+            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Platform</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              <StatCard icon={Users} label="Users" value={platformStats.total_users} color="blue" subtext={platformStats.last_7_days?.new_users ? `+${platformStats.last_7_days.new_users} this week` : null} />
+              <StatCard icon={Box} label="Environments" value={platformStats.total_environments} color="emerald" subtext={platformStats.last_7_days?.new_environments ? `+${platformStats.last_7_days.new_environments} this week` : null} />
+              <StatCard icon={Cpu} label="Training Runs" value={platformStats.total_training_runs} color="cyan" subtext={`${platformStats.completed_training || 0} completed`} />
+              <StatCard icon={FlaskConical} label="Research Projects" value={platformStats.total_projects} color="purple" />
+              <StatCard icon={ScrollText} label="Papers" value={platformStats.total_papers} color="amber" subtext={platformStats.last_7_days?.new_papers ? `+${platformStats.last_7_days.new_papers} this week` : null} />
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Marketing / GTM Stats */}
+      {marketingStats && (
+        <div>
+          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Marketing (GTM)</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            <StatCard icon={Megaphone} label="GTM Tweets" value={marketingStats.total_tweets} color="pink" subtext={`${marketingStats.posted_tweets || 0} posted`} />
+            <StatCard icon={Heart} label="Total Likes" value={marketingStats.engagement?.total_likes ?? marketingStats.total_likes} color="rose" />
+            <StatCard icon={MessageCircle} label="Replies Sent" value={marketingStats.engagement?.total_replies ?? 0} color="blue" />
+            <StatCard icon={UserPlus} label="Prospects" value={marketingStats.prospect_funnel?.total_prospects ?? 0} color="purple" subtext={`${marketingStats.prospect_funnel?.high_value_count ?? 0} high-value`} />
+            <StatCard icon={Target} label="Pending Replies" value={marketingStats.engagement?.pending_replies ?? 0} color="orange" subtext="awaiting approval" />
+          </div>
+        </div>
+      )}
+
+      {/* Bot Stats */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Research Bot</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard icon={Send} label="Total Tweets" value={stats?.total_tweets} color="blue" subtext={`${stats?.tweets_today || 0} today`} />
+          <StatCard icon={Heart} label="Total Likes" value={stats?.total_likes} color="rose" />
+          <StatCard icon={Repeat2} label="Total Retweets" value={stats?.total_retweets} color="emerald" />
+          <StatCard icon={Eye} label="Impressions" value={stats?.total_impressions} color="purple" />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

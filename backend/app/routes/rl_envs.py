@@ -58,24 +58,16 @@ async def generate_environment(data: dict, db: AsyncSession = Depends(get_db)):
     log_lines.append(f"[code] Generated {len(code)} chars of code")
 
     test_results = await sandbox_runner.run_all_tests(code)
-    log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed")
+    code, test_results, fix_log = await architect_service.auto_fix_until_passing(
+        code, spec_json, test_results, max_attempts=4,
+    )
+    log_lines.extend(f"[fix] {line}" for line in fix_log)
 
-    max_fix_attempts = 2 if test_results["passed"] < 6 else 1
-    attempts = 0
-    while test_results["failed"] > 0 and attempts < max_fix_attempts:
-        attempts += 1
-        log_lines.append(f"[fix] Attempt {attempts}: fixing {test_results['failed']} failed tests")
-        fixed_code = await architect_service.fix_env_code(code, spec_json, json.dumps(test_results))
-        if fixed_code and fixed_code != code:
-            code = fixed_code
-            test_results = await sandbox_runner.run_all_tests(code)
-            log_lines.append(f"[test] {test_results['passed']}/{test_results['total']} passed after fix {attempts}")
-        else:
-            log_lines.append(f"[fix] No change from fix attempt {attempts}")
-            break
-
-    auto_publish = data.get("auto_publish", True)
+    # Quality gate: only publish environments that pass the threshold.
+    auto_publish = data.get("auto_publish", True) and test_results.get("passed", 0) >= architect_service.PASS_THRESHOLD
     status = "published" if auto_publish else "draft"
+    if data.get("auto_publish", True) and not auto_publish:
+        log_lines.append(f"[gate] Not published: only {test_results.get('passed', 0)}/{test_results.get('total', 0)} tests pass (need {architect_service.PASS_THRESHOLD}+). Saved as draft.")
 
     env = RLEnvironment(
         name=gen.get("name", topic[:100]),

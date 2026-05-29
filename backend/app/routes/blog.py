@@ -5,9 +5,10 @@ from datetime import datetime
 from app.database import get_db
 from app.models import BlogPost, Tweet, Article
 from app.services.ai_service import ai_service
+from app.auth import require_admin
 from typing import Optional
 
-router = APIRouter(prefix="/api/blog", tags=["Blog"])
+router = APIRouter(prefix="/api/blog", tags=["Blog"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/")

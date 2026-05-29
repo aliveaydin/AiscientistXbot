@@ -24,24 +24,24 @@ import {
 const phases = [
   {
     num: "01",
-    title: "Research",
-    desc: "Sage searches ArXiv for relevant literature, identifies gaps, and builds a knowledge base for the project.",
-    icon: <Search size={18} />,
+    title: "Hypothesis",
+    desc: "Sage formulates an original hypothesis and research question from your topic — no literature search yet. Defines agent requirements and environment specs.",
+    icon: <Lightbulb size={18} />,
     agent: "Sage",
     color: "amber",
   },
   {
     num: "02",
     title: "Design",
-    desc: "Agents collaborate to define hypotheses, propose experiment methodology, and select environment parameters.",
+    desc: "Atlas designs a custom Gymnasium environment based on the hypothesis, including agent-side behavior like self-observation and adaptive mechanisms.",
     icon: <Compass size={18} />,
-    agent: "Sage + Atlas",
+    agent: "Atlas",
     color: "blue",
   },
   {
     num: "03",
     title: "Experiment",
-    desc: "Atlas builds real Gymnasium environments, trains SB3 agents, and collects actual training metrics and curves.",
+    desc: "Atlas trains real SB3 agents with configurable hyperparameters. Supports Continue, Fine-Tune, and Curriculum training modes.",
     icon: <FlaskConical size={18} />,
     agent: "Atlas",
     color: "blue",
@@ -56,8 +56,8 @@ const phases = [
   },
   {
     num: "05",
-    title: "Write",
-    desc: "Sage drafts a complete academic paper with introduction, methodology, results, and conclusions backed by real data.",
+    title: "Research & Write",
+    desc: "Sage conducts academic literature research for supporting references, then writes a complete paper with inline training figures, tables, and real experimental data.",
     icon: <FileText size={18} />,
     agent: "Sage",
     color: "amber",
@@ -65,7 +65,7 @@ const phases = [
   {
     num: "06",
     title: "Review",
-    desc: "Both agents review the paper for accuracy, consistency with experimental results, and academic rigor.",
+    desc: "Both agents review the paper for accuracy, consistency with experimental results, and academic rigor. PDF download ready.",
     icon: <CheckCircle size={18} />,
     agent: "Sage + Atlas",
     color: "green",
@@ -82,11 +82,11 @@ const agentCards = [
     textClass: "text-amber-400",
     borderClass: "border-amber-900/40",
     abilities: [
-      "ArXiv literature search & analysis",
-      "Research gap identification",
-      "Hypothesis formulation",
-      "Academic paper writing",
-      "Citation management",
+      "Original hypothesis formulation from user topic",
+      "Academic literature research for supporting references",
+      "Research question & experimental design",
+      "Academic paper writing with inline figures",
+      "PDF download with training data embedded",
     ],
   },
   {
@@ -98,11 +98,11 @@ const agentCards = [
     textClass: "text-blue-400",
     borderClass: "border-blue-900/40",
     abilities: [
-      "Gymnasium environment generation",
-      "SB3 agent training (PPO, SAC, DQN)",
-      "Hyperparameter configuration",
-      "Training metric collection",
-      "Result analysis & visualization",
+      "Gymnasium environment generation with agent-side design",
+      "SB3 training: Continue, Fine-Tune, Curriculum modes",
+      "Configurable hyperparameters (LR, batch, gamma, net arch)",
+      "Training metric collection & curve generation",
+      "Result analysis, evaluation episodes & visualization",
     ],
   },
 ];
@@ -125,15 +125,16 @@ export default async function ResearchPage() {
             <Brain size={20} className="text-[#888]" />
           </div>
         </div>
-        <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-4xl">
+        <h1 className="text-3xl sm:text-5xl md:text-7xl font-bold tracking-tight leading-[1.05] max-w-4xl">
           AI Research Lab
         </h1>
         <p className="text-xl md:text-2xl text-[#888] mt-6 max-w-2xl leading-relaxed">
-          Automated RL research pipeline — from literature review to published paper
+          Hypothesis-first research pipeline — from original idea to published paper
         </p>
         <p className="text-sm text-[#555] mt-4 max-w-xl leading-relaxed">
-          Two specialized AI agents collaborate to search literature, design experiments,
-          train real RL agents, analyze results, and write complete academic papers.
+          Two AI agents formulate an original hypothesis, design custom environments,
+          train real agents, analyze results, and write academic papers with inline
+          training figures and literature references — downloadable as PDF.
         </p>
         <div className="flex flex-wrap gap-4 mt-10 justify-center">
           <Link
@@ -151,12 +152,12 @@ export default async function ResearchPage() {
         </div>
         <div className="flex flex-wrap gap-3 mt-12 justify-center">
           {[
-            { label: "ArXiv Search", icon: <Search size={12} /> },
+            { label: "Hypothesis-First", icon: <Lightbulb size={12} /> },
             { label: "Real Experiments", icon: <FlaskConical size={12} /> },
-            { label: "SB3 Training", icon: <Cpu size={12} /> },
-            { label: "Gymnasium Envs", icon: <Beaker size={12} /> },
-            { label: "Academic Papers", icon: <FileText size={12} /> },
-            { label: "Multi-Agent AI", icon: <Brain size={12} /> },
+            { label: "Inline Figures & Tables", icon: <LineChart size={12} /> },
+            { label: "Literature Research", icon: <Search size={12} /> },
+            { label: "PDF Download", icon: <FileText size={12} /> },
+            { label: "Re-run Any Phase", icon: <Brain size={12} /> },
           ].map((c) => (
             <span
               key={c.label}
@@ -171,10 +172,10 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── How the Lab Works — Pipeline ─── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <h2 className="text-2xl font-bold mb-3">How the Lab Works</h2>
         <p className="text-[#666] text-sm mb-14 max-w-lg">
-          A six-phase automated pipeline turns a research topic into a complete paper backed by real data.
+          A six-phase hypothesis-first pipeline turns your research idea into a complete paper backed by real experimental data.
         </p>
 
         {/* Timeline */}
@@ -224,7 +225,7 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── AI Research Agents ────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="text-center mb-14">
           <h2 className="text-2xl font-bold mb-3">AI Research Agents</h2>
           <p className="text-[#666] text-sm max-w-lg mx-auto">
@@ -272,7 +273,7 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── Real Experiments, Real Data ───── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="flex flex-col md:flex-row gap-8 md:gap-12 items-center">
           <div className="flex-1 space-y-4">
             <div className="text-[#555]"><Microscope size={20} /></div>
@@ -295,19 +296,19 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── Paper Generation ──────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="flex flex-col md:flex-row-reverse gap-8 md:gap-12 items-center">
           <div className="flex-1 space-y-4">
             <div className="text-[#555]"><GraduationCap size={20} /></div>
-            <h3 className="text-xl font-bold">Complete Academic Papers</h3>
+            <h3 className="text-xl font-bold">Papers with Inline Data</h3>
             <p className="text-sm text-[#888] leading-relaxed max-w-md">
-              The lab produces full academic papers with proper structure — abstract, introduction,
-              related work, methodology, experimental setup, results, discussion, and conclusion.
-              All sections reference real experimental data and include proper citations.
+              Papers include inline training curves, evaluation tables, hyperparameter details,
+              and reproducibility info — embedded directly in the relevant sections, not just
+              appended. Academic literature is used as supporting citations for your original hypothesis.
             </p>
             <p className="text-sm text-[#666] leading-relaxed max-w-md">
-              Papers are generated in markdown with LaTeX math support, ready for further editing
-              or direct publication.
+              Download the final paper as a styled PDF with all figures and data included.
+              Re-run any phase to iterate on your research.
             </p>
           </div>
           <div className="flex-1 w-full">
@@ -319,7 +320,7 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── From Builder to Paper ─────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24">
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <div className="flex flex-col md:flex-row gap-8 md:gap-12 items-center">
           <div className="flex-1 space-y-4">
             <div className="text-[#555]"><Lightbulb size={20} /></div>
@@ -349,7 +350,7 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── Published Papers ──────────────── */}
-      <section id="published-papers" className="max-w-6xl mx-auto px-6 py-24">
+      <section id="published-papers" className="max-w-6xl mx-auto px-4 md:px-6 py-24">
         <h2 className="text-2xl font-bold mb-3">Published Papers</h2>
         <p className="text-[#666] text-sm mb-10 max-w-lg">
           Research papers generated by the lab, each backed by real experiments and training data.
@@ -412,8 +413,8 @@ export default async function ResearchPage() {
       <div className="line-glow" />
 
       {/* ── CTA ───────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 py-24 text-center">
-        <h2 className="text-3xl md:text-4xl font-bold mb-4">Start Your Research</h2>
+      <section className="max-w-6xl mx-auto px-4 md:px-6 py-24 text-center">
+        <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold mb-4">Start Your Research</h2>
         <p className="text-[#666] mb-10 max-w-md mx-auto">
           Give the lab a topic. Get a paper backed by real experiments.
         </p>
@@ -445,7 +446,7 @@ function MockAgentCollaboration() {
     <div className="border border-[#1a1a1a] rounded-xl bg-[#0a0a0a] overflow-hidden">
       <div className="border-b border-[#1a1a1a] px-4 py-2.5 flex items-center gap-2">
         <Brain size={12} className="text-[#555]" />
-        <span className="text-[10px] text-[#888]">Agent Collaboration — Research Phase</span>
+        <span className="text-[10px] text-[#888]">Agent Collaboration — Hypothesis Phase</span>
         <span className="text-[9px] text-[#555] ml-auto font-mono">Phase 1/6</span>
       </div>
 
@@ -455,11 +456,12 @@ function MockAgentCollaboration() {
             <span className="text-[9px] text-amber-400 font-bold">SG</span>
           </div>
           <div className="bg-[#0a0a0a] border border-amber-900/20 rounded-lg p-3 text-[11px] flex-1">
-            <p className="text-[9px] text-amber-400 font-medium mb-1.5">Sage — Research Strategist</p>
+            <p className="text-[9px] text-amber-400 font-medium mb-1.5">Sage — Hypothesis</p>
             <p className="text-[#bbb] leading-relaxed">
-              Found 23 relevant papers on ArXiv for &quot;curriculum learning in sparse-reward navigation.&quot;
-              Key gap: no existing work combines automatic curriculum generation with hindsight experience replay
-              in continuous-control navigation tasks.
+              Based on your topic &quot;curriculum learning in sparse-reward navigation,&quot;
+              I&apos;ve formulated the hypothesis: automatic curriculum generation combined with
+              hindsight replay will outperform flat-reward baselines. The agent needs adaptive
+              difficulty sensing and experience memory.
             </p>
           </div>
         </div>
@@ -469,11 +471,11 @@ function MockAgentCollaboration() {
             <span className="text-[9px] text-blue-400 font-bold">AT</span>
           </div>
           <div className="bg-[#0a0a0a] border border-blue-900/20 rounded-lg p-3 text-[11px] flex-1">
-            <p className="text-[9px] text-blue-400 font-medium mb-1.5">Atlas — RL Engineer</p>
+            <p className="text-[9px] text-blue-400 font-medium mb-1.5">Atlas — Design & Experiment</p>
             <p className="text-[#bbb] leading-relaxed">
-              I can build 3 Gymnasium environments with increasing difficulty: point-navigation, obstacle
-              navigation, and multi-goal maze. We should compare PPO with and without HER as the baseline,
-              then add our curriculum approach.
+              Building CurriculumNav-v1 with adaptive obs space and difficulty scaling.
+              Training PPO with Continue → Curriculum modes, configurable LR and batch size.
+              8/8 tests passed. Starting 50K timesteps...
             </p>
           </div>
         </div>
@@ -483,11 +485,11 @@ function MockAgentCollaboration() {
             <span className="text-[9px] text-amber-400 font-bold">SG</span>
           </div>
           <div className="bg-[#0a0a0a] border border-amber-900/20 rounded-lg p-3 text-[11px] flex-1">
-            <p className="text-[9px] text-amber-400 font-medium mb-1.5">Sage — Research Strategist</p>
+            <p className="text-[9px] text-amber-400 font-medium mb-1.5">Sage — Research & Write</p>
             <p className="text-[#bbb] leading-relaxed">
-              Agreed. The paper structure will be: (1) problem formulation with formal MDP definition,
-              (2) the curriculum generation algorithm, (3) experimental evaluation across all 3 domains.
-              Moving to Design phase.
+              Found 14 academic papers as supporting references. Writing paper with inline training curves,
+              evaluation tables, and hyperparameter details embedded in relevant sections.
+              PDF ready for download.
             </p>
           </div>
         </div>
@@ -499,7 +501,7 @@ function MockAgentCollaboration() {
               style={{ width: "16%" }}
             />
           </div>
-          <span className="text-[9px] text-[#555] shrink-0">Phase 1/6 — Research</span>
+          <span className="text-[9px] text-[#555] shrink-0">Phase 1/6 — Hypothesis</span>
         </div>
       </div>
     </div>
@@ -645,15 +647,15 @@ function MockPaperPreview() {
           </div>
 
           <div>
-            <h5 className="text-[10px] font-bold text-[#888] uppercase tracking-wider mb-1.5">Data</h5>
+            <h5 className="text-[10px] font-bold text-[#888] uppercase tracking-wider mb-1.5">Inline Data</h5>
             <div className="space-y-1.5">
               {[
-                { label: "Environments", value: "3" },
-                { label: "Training runs", value: "12" },
-                { label: "Total steps", value: "6M" },
-                { label: "Citations", value: "23" },
-                { label: "Tables", value: "4" },
-                { label: "Figures", value: "6" },
+                { label: "Training curves", value: "inline" },
+                { label: "Eval episodes", value: "inline" },
+                { label: "Hyperparameters", value: "table" },
+                { label: "Academic citations", value: "23" },
+                { label: "Reproducibility", value: "included" },
+                { label: "PDF download", value: "ready" },
               ].map((d) => (
                 <div key={d.label} className="flex justify-between text-[10px]">
                   <span className="text-[#555]">{d.label}</span>

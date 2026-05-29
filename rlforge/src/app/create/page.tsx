@@ -64,7 +64,13 @@ export default function CreatePage() {
       );
       setResult(data);
     } catch (e: any) {
-      setError(e.message || "Generation failed");
+      if (e.code === "PLAN_LIMIT_REACHED") {
+        setError("You've reached the environment limit for your plan. Go to Settings → Subscription to upgrade.");
+      } else if (e.code === "INSUFFICIENT_CREDITS") {
+        setError(`Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Go to Settings → Subscription to manage your plan.`);
+      } else {
+        setError(e.message || "Generation failed. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

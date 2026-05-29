@@ -140,14 +140,15 @@ try:
 
         cleanup = '''
 except Exception as e:
-    emit("{test_name}", "fail", f"{{type(e).__name__}}: {{e}}")
+    import traceback as _tb
+    emit("__TESTNAME__", "fail", f"{type(e).__name__}: {e} | {_tb.format_exc().splitlines()[-3:]}")
 finally:
     try:
         os.unlink(_mod_path)
         os.rmdir(_tmp_dir)
     except OSError:
         pass
-'''.replace("{test_name}", test_name)
+'''.replace("__TESTNAME__", test_name)
 
         test_body = self._get_test_body(test_name)
 

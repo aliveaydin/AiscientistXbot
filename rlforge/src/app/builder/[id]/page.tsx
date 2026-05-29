@@ -17,6 +17,7 @@ import {
   startTraining, getTrainingStatus, getTrainingCurve,
   getTrainingReplay, getTrainingHistory, getTrainingReport,
   updateEnvName, githubExport, createPaperFromEnv,
+  getBuilderSuggestions,
 } from "@/lib/api";
 import { useRouter } from "next/navigation";
 
@@ -35,6 +36,8 @@ export default function BuilderPage() {
   const [versions, setVersions] = useState<any[]>([]);
   const [rightTab, setRightTab] = useState<RightTab>("dashboard");
   const [trainStatus, setTrainStatus] = useState<any>(null);
+  const [suggestions, setSuggestions] = useState<{label: string; message: string; category: string}[]>([]);
+  const [sugLoading, setSugLoading] = useState(false);
   const chatEnd = useRef<HTMLDivElement>(null);
 
   useEffect(() => { fetchEnv(); fetchHistory(); fetchVersions(); checkTraining(); }, [envId]);
@@ -45,6 +48,20 @@ export default function BuilderPage() {
   async function fetchVersions() { try { setVersions(await getEnvVersions(envId)); } catch {} }
   async function checkTraining() { try { setTrainStatus(await getTrainingStatus(envId)); } catch {} }
 
+  async function fetchSuggestions() {
+    setSugLoading(true);
+    try { setSuggestions(await getBuilderSuggestions(envId)); } catch { setSuggestions([]); }
+    finally { setSugLoading(false); }
+  }
+
+  useEffect(() => {
+    if (env) fetchSuggestions();
+  }, [env?.id]);
+
+  function useSuggestion(msg: string) {
+    setInput(msg);
+  }
+
   async function sendMessage() {
     if (!input.trim() || loading) return;
     const msg = input.trim(); setInput(""); setLoading(true);
@@ -54,9 +71,12 @@ export default function BuilderPage() {
       const data = await builderChat(envId, msg, token);
       const isQuestion = data.mode === "question";
       setMessages(p => [...p, { id: Date.now()+1, role: "assistant", content: JSON.stringify({ mode: data.mode, change_summary: data.change_summary, breaking_changes: data.breaking_changes, test_results: data.test_results }), version_snapshot: data.version, created_at: new Date().toISOString() }]);
-      if (!isQuestion) { await fetchEnv(); await fetchVersions(); }
+      if (!isQuestion) { await fetchEnv(); await fetchVersions(); fetchSuggestions(); }
     } catch (e: any) {
-      setMessages(p => [...p, { id: Date.now()+1, role: "system", content: `Error: ${e.message}`, version_snapshot: null, created_at: new Date().toISOString() }]);
+      let errMsg = e.message || "Something went wrong";
+      if (e.code === "INSUFFICIENT_CREDITS") errMsg = `Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Visit Settings → Subscription to manage your plan.`;
+      if (e.code === "PLAN_LIMIT_REACHED") errMsg = "You've reached the limit for your plan. Visit Settings → Subscription to upgrade.";
+      setMessages(p => [...p, { id: Date.now()+1, role: "system", content: errMsg, version_snapshot: null, created_at: new Date().toISOString() }]);
     } finally { setLoading(false); }
   }
 
@@ -107,7 +127,7 @@ export default function BuilderPage() {
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col">
       {/* Top bar */}
-      <div className="border-b border-[#1a1a1a] px-6 py-3 flex items-center justify-between shrink-0">
+      <div className="border-b border-[#1a1a1a] px-3 md:px-6 py-3 flex items-center justify-between shrink-0 overflow-x-auto gap-3">
         <div className="flex items-center gap-1.5 text-xs min-w-0">
           <Link href="/dashboard" className="text-[#555] hover:text-white transition-colors shrink-0">Dashboard</Link>
           <span className="text-[#333] shrink-0">/</span>
@@ -131,15 +151,15 @@ export default function BuilderPage() {
           <span className="text-[10px] text-[#555] font-mono shrink-0">v{env?.version || 1}</span>
           {env?.domain && <span className="text-[10px] px-2 py-0.5 bg-[#1a1a1a] rounded-full text-[#888] shrink-0">{env.domain}</span>}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setPaperModalOpen(true)} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-amber-900/60 text-amber-400 rounded hover:border-amber-700 transition-colors" title="Generate a research paper from this environment">
-            <FileText size={12} /> Create Paper
+        <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
+          <button onClick={() => setPaperModalOpen(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs border border-amber-900/60 text-amber-400 rounded hover:border-amber-700 transition-colors" title="Generate a research paper from this environment">
+            <FileText size={12} /> <span className="hidden sm:inline">Create Paper</span>
           </button>
-          <button onClick={() => setGhModalOpen(true)} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors" title="Push to GitHub">
-            <Github size={12} /> GitHub
+          <button onClick={() => setGhModalOpen(true)} className="flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors" title="Push to GitHub">
+            <Github size={12} /> <span className="hidden sm:inline">GitHub</span>
           </button>
-          <button onClick={handleExportZip} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors">
-            <Download size={12} /> ZIP
+          <button onClick={handleExportZip} className="flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs border border-[#1a1a1a] rounded hover:border-[#333] transition-colors" title="Export ZIP">
+            <Download size={12} /> <span className="hidden sm:inline">ZIP</span>
           </button>
           {hasCompletedTraining && (
             <button onClick={() => setRightTab("agent")} className="flex items-center gap-1 px-3 py-1.5 text-xs border border-blue-900 text-blue-400 rounded hover:border-blue-700 transition-colors">
@@ -158,9 +178,9 @@ export default function BuilderPage() {
       </div>
 
       {/* Main split */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
         {/* Chat */}
-        <div className="w-[40%] border-r border-[#1a1a1a] flex flex-col">
+        <div className="w-full md:w-[40%] min-h-[300px] md:min-h-0 border-b md:border-b-0 md:border-r border-[#1a1a1a] flex flex-col">
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 && <p className="text-[#555] text-sm text-center py-8">Ask questions or describe changes to iterate on your environment.</p>}
             {messages.map(m => (
@@ -173,16 +193,54 @@ export default function BuilderPage() {
             ))}
             <div ref={chatEnd} />
           </div>
-          <div className="border-t border-[#1a1a1a] p-3 flex gap-2">
-            <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage()} placeholder="Ask a question or describe changes..." className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#333]" disabled={loading} />
-            <button onClick={sendMessage} disabled={loading || !input.trim()} className="px-3 py-2 bg-white text-black rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 transition-colors">
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-            </button>
+          <div className="border-t border-[#1a1a1a] p-3 space-y-2">
+            {suggestions.length > 0 && !loading && (
+              <div className="flex flex-wrap gap-1.5">
+                {suggestions.map((s, i) => {
+                  const catColors: Record<string, string> = {
+                    iterate: "border-blue-900/60 text-blue-400 hover:border-blue-700",
+                    difficulty: "border-amber-900/60 text-amber-400 hover:border-amber-700",
+                    training: "border-green-900/60 text-green-400 hover:border-green-700",
+                    experiment: "border-purple-900/60 text-purple-400 hover:border-purple-700",
+                  };
+                  const color = catColors[s.category] || catColors.iterate;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => useSuggestion(s.message)}
+                      title={s.message}
+                      className={`text-[10px] px-2.5 py-1 rounded-full border ${color} transition-colors truncate max-w-[200px]`}
+                    >
+                      {s.label}
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={fetchSuggestions}
+                  disabled={sugLoading}
+                  className="text-[10px] px-2 py-1 text-[#444] hover:text-[#888] transition-colors"
+                  title="Refresh suggestions"
+                >
+                  {sugLoading ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                </button>
+              </div>
+            )}
+            {sugLoading && suggestions.length === 0 && (
+              <div className="flex items-center gap-1.5 text-[10px] text-[#444]">
+                <Loader2 size={10} className="animate-spin" /> Generating suggestions...
+              </div>
+            )}
+            <div className="flex gap-2">
+              <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage()} placeholder="Ask a question or describe changes..." className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg px-3 py-2 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#333]" disabled={loading} />
+              <button onClick={sendMessage} disabled={loading || !input.trim()} className="px-3 py-2 bg-white text-black rounded-lg hover:bg-[#e5e5e5] disabled:opacity-50 transition-colors">
+                {loading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Right panel */}
-        <div className="w-[60%] flex flex-col overflow-hidden">
+        <div className="w-full md:w-[60%] flex flex-col overflow-hidden">
           <div className="border-b border-[#1a1a1a] px-4 flex items-center shrink-0 overflow-x-auto">
             {TABS.map(({ key, icon: Icon, label }) => (
               <button key={key} onClick={() => setRightTab(key)}
@@ -312,7 +370,9 @@ function PaperFromEnvModal({ envId, env, onClose }: { envId: number; env: any; o
       const data = await createPaperFromEnv(envId, topic, token);
       setResult({ projectId: data.project_id });
     } catch (e: any) {
-      setResult({ error: e.message || "Failed to start paper generation" });
+      let errMsg = e.message || "Failed to start paper generation";
+      if (e.code === "INSUFFICIENT_CREDITS") errMsg = `Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Visit Settings → Subscription to add more.`;
+      setResult({ error: errMsg });
     } finally { setGenerating(false); }
   }
 
@@ -330,7 +390,7 @@ function PaperFromEnvModal({ envId, env, onClose }: { envId: number; env: any; o
           Generate a research paper from <span className="text-white font-medium">{env?.name}</span> and its training data.
         </p>
         <p className="text-xs text-[#555] mb-5">
-          The Research Lab will analyze your training results, search ArXiv for related work, and write a complete paper with methodology, results, and discussion.
+          The Research Lab will analyze your training results, search academic literature for related work, and write a complete paper with methodology, results, and discussion.
         </p>
 
         <div className="space-y-3">
@@ -395,9 +455,13 @@ function formatSteps(n: number): string {
   return String(n);
 }
 
+type TrainingMode = "standard" | "continue" | "curriculum" | "finetune";
+
 function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; onStatusChange: (s: any) => void }) {
   const { getToken } = useAuth();
-  const [config, setConfig] = useState({ algorithm: "auto", total_timesteps: 10000, learning_rate: "" });
+  const [config, setConfig] = useState({ algorithm: "auto", total_timesteps: 10000, learning_rate: "", batch_size: "", gamma: "", net_arch: "auto" });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [trainingMode, setTrainingMode] = useState<TrainingMode>("standard");
   const [status, setStatus] = useState<any>(null);
   const [curve, setCurve] = useState<any[]>([]);
   const [replay, setReplay] = useState<any[]>([]);
@@ -434,17 +498,36 @@ function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; on
   async function loadReplay() { try { setReplay(await getTrainingReplay(envId)); } catch {} }
   async function loadReport(runId: number) { try { setReport(await getTrainingReport(envId, runId)); } catch {} }
 
-  async function handleStart(isContinue = false) {
+  async function handleStart(mode: TrainingMode = "standard") {
     setTrainLoading(true); setReport(null); setShowReport(false);
     try {
       const cfg: any = { total_timesteps: config.total_timesteps };
       if (config.algorithm !== "auto") cfg.algorithm = config.algorithm;
       if (config.learning_rate) cfg.learning_rate = parseFloat(config.learning_rate);
-      if (isContinue) cfg.continue_from = true;
+      if (config.batch_size) cfg.batch_size = parseInt(config.batch_size);
+      if (config.gamma) cfg.gamma = parseFloat(config.gamma);
+      if (config.net_arch && config.net_arch !== "auto") cfg.net_arch = config.net_arch;
+
+      if (mode === "continue") {
+        cfg.continue_from = true;
+      } else if (mode === "curriculum") {
+        cfg.continue_from = true;
+        cfg.curriculum = true;
+      } else if (mode === "finetune") {
+        cfg.continue_from = true;
+        if (!config.learning_rate) cfg.learning_rate = 0.00005;
+        if (!cfg.total_timesteps || cfg.total_timesteps > 10000) cfg.total_timesteps = Math.min(cfg.total_timesteps, 10000);
+      }
+
       const token = await getToken();
       const r = await startTraining(envId, cfg, token);
       setStatus(r); onStatusChange(r); setCurve([]); setReplay([]);
-    } catch (e: any) { setStatus({ status: "failed", error: e.message }); } finally { setTrainLoading(false); }
+    } catch (e: any) {
+      let errMsg = e.message || "Training failed";
+      if (e.code === "INSUFFICIENT_CREDITS") errMsg = `Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Visit Settings → Subscription to add more.`;
+      if (e.code === "PLAN_LIMIT_REACHED") errMsg = "Training step limit exceeded for your plan. Upgrade to unlock more.";
+      setStatus({ status: "failed", error: errMsg });
+    } finally { setTrainLoading(false); }
   }
 
   function startReplay() {
@@ -526,9 +609,46 @@ function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; on
 
       {/* Config & Start */}
       <div className="border border-[#1a1a1a] rounded-lg p-4 space-y-4">
-        <h3 className="text-sm font-medium flex items-center gap-2"><Cpu size={14} /> Train an Agent</h3>
-        <p className="text-[11px] text-[#555]">Platform automatically creates and trains an RL agent using the best algorithm for your environment&apos;s action space.</p>
-        <div className="grid grid-cols-3 gap-3">
+        <h3 className="text-sm font-medium flex items-center gap-2">
+          <Cpu size={14} /> {isCompleted ? "Continue Training" : "Train an Agent"}
+        </h3>
+        {!isCompleted && (
+          <p className="text-[11px] text-[#555]">Platform automatically creates and trains an RL agent using the best algorithm for your environment&apos;s action space.</p>
+        )}
+
+        {isCompleted && (
+          <div>
+            <label className="text-[10px] text-[#555] block mb-2">Training Mode</label>
+            <div className="grid grid-cols-3 gap-2">
+              {([
+                { key: "continue" as TrainingMode, icon: RefreshCw, label: "Continue", desc: "Same settings, resume training", color: "blue" },
+                { key: "finetune" as TrainingMode, icon: Settings2, label: "Fine-Tune", desc: "Low LR, short training", color: "purple" },
+                { key: "curriculum" as TrainingMode, icon: Zap, label: "Curriculum", desc: "Auto-increase difficulty", color: "amber" },
+              ]).map(m => {
+                const selected = trainingMode === m.key;
+                const borderColor = selected
+                  ? m.color === "blue" ? "border-blue-500" : m.color === "purple" ? "border-purple-500" : "border-amber-500"
+                  : "border-[#1a1a1a] hover:border-[#333]";
+                const textColor = m.color === "blue" ? "text-blue-400" : m.color === "purple" ? "text-purple-400" : "text-amber-400";
+                return (
+                  <button
+                    key={m.key}
+                    onClick={() => setTrainingMode(m.key)}
+                    className={`flex flex-col items-start p-2.5 rounded-lg border ${borderColor} transition-colors text-left`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <m.icon size={12} className={selected ? textColor : "text-[#555]"} />
+                      <span className={`text-xs font-medium ${selected ? "text-white" : "text-[#888]"}`}>{m.label}</span>
+                    </div>
+                    <span className="text-[9px] text-[#555] leading-tight">{m.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div><label className="text-[10px] text-[#555] block mb-1">Algorithm</label>
             <select value={config.algorithm} onChange={e => setConfig(p => ({...p, algorithm: e.target.value}))} className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white">
               <option value="auto">Auto-detect</option><option value="PPO">PPO</option><option value="DQN">DQN</option><option value="SAC">SAC</option>
@@ -543,18 +663,64 @@ function AgentView({ envId, env, onStatusChange }: { envId: number; env: any; on
               )}
             </div></div>
           <div><label className="text-[10px] text-[#555] block mb-1">Learning Rate</label>
-            <input value={config.learning_rate} onChange={e => setConfig(p => ({...p, learning_rate: e.target.value}))} placeholder="auto" className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white placeholder:text-[#555]" /></div>
+            <input value={config.learning_rate} onChange={e => setConfig(p => ({...p, learning_rate: e.target.value}))} placeholder={trainingMode === "finetune" ? "0.00005 (auto)" : "auto"} className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white placeholder:text-[#555]" /></div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => handleStart(false)} disabled={trainLoading || isRunning} className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs rounded hover:bg-green-700 disabled:opacity-50 transition-colors">
-            {trainLoading || isRunning ? <><Loader2 size={12} className="animate-spin" /> Training...</> : <><Play size={12} /> Start Training</>}
-          </button>
-          {isCompleted && (
-            <button onClick={() => handleStart(true)} disabled={trainLoading} className="flex items-center gap-2 px-4 py-2 border border-blue-800 text-blue-400 text-xs rounded hover:border-blue-600 transition-colors">
-              <RefreshCw size={12} /> Continue Training
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="flex items-center gap-1 text-[10px] text-[#555] hover:text-[#888] transition-colors"
+        >
+          <ChevronDown size={10} className={`transition-transform ${showAdvanced ? "rotate-180" : ""}`} />
+          Advanced Settings
+        </button>
+        {showAdvanced && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 border-t border-[#1a1a1a] pt-3">
+            <div>
+              <label className="text-[10px] text-[#555] block mb-1">Batch Size</label>
+              <select value={config.batch_size || ""} onChange={e => setConfig(p => ({...p, batch_size: e.target.value}))} className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white">
+                <option value="">Auto</option>
+                <option value="32">32</option>
+                <option value="64">64</option>
+                <option value="128">128</option>
+                <option value="256">256</option>
+                <option value="512">512</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-[#555] block mb-1">Discount (gamma)</label>
+              <select value={config.gamma || ""} onChange={e => setConfig(p => ({...p, gamma: e.target.value}))} className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white">
+                <option value="">Auto (0.99)</option>
+                <option value="0.9">0.9</option>
+                <option value="0.95">0.95</option>
+                <option value="0.99">0.99</option>
+                <option value="0.995">0.995</option>
+                <option value="0.999">0.999</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] text-[#555] block mb-1">Network Size</label>
+              <select value={config.net_arch} onChange={e => setConfig(p => ({...p, net_arch: e.target.value}))} className="w-full bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1.5 text-xs text-white">
+                <option value="auto">Auto (medium)</option>
+                <option value="small">Small (64, 64)</option>
+                <option value="medium">Medium (256, 256)</option>
+                <option value="large">Large (512, 256, 128)</option>
+              </select>
+            </div>
+          </div>
+        )}
+        <button
+          onClick={() => handleStart(isCompleted ? trainingMode : "standard")}
+          disabled={trainLoading || isRunning}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
+        >
+          {trainLoading || isRunning
+            ? <><Loader2 size={12} className="animate-spin" /> Training...</>
+            : <><Play size={12} /> {isCompleted
+                ? trainingMode === "curriculum" ? "Increase Difficulty & Train"
+                : trainingMode === "finetune" ? "Fine-Tune Agent"
+                : "Continue Training"
+              : "Start Training"}</>
+          }
+        </button>
       </div>
 
       {/* Live Training Charts */}
@@ -974,13 +1140,13 @@ function DocsView({ env }: { env: any }) {
         {obs.components?.length > 0 && (
           <div className="mt-2">
             <p className="text-[10px] text-[#555] mb-1.5">Components ({obs.components.length})</p>
-            <div className="flex flex-wrap gap-1">{obs.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-blue-950/30 text-blue-400 rounded">{c}</span>)}</div>
+            <div className="flex flex-wrap gap-1">{obs.components.map((c: any, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-blue-950/30 text-blue-400 rounded">{compLabel(c)}</span>)}</div>
           </div>
         )}
         <p className="text-[12px] text-[#888] leading-relaxed mt-1">
           The agent receives a {obs.type || "Box"} observation at each step.
           {obs.shape && <> The observation vector has {Array.isArray(obs.shape) ? obs.shape.reduce((a: number, b: number) => a * b, 1) : obs.shape} dimensions.</>}
-          {obs.components?.length > 0 && <> Each component encodes different aspects of the environment state: {obs.components.slice(0, 5).join(", ")}{obs.components.length > 5 ? `, and ${obs.components.length - 5} more` : ""}.</>}
+          {obs.components?.length > 0 && <> Each component encodes different aspects of the environment state: {obs.components.slice(0, 5).map(compLabel).join(", ")}{obs.components.length > 5 ? `, and ${obs.components.length - 5} more` : ""}.</>}
         </p>
       </section>
 
@@ -995,7 +1161,7 @@ function DocsView({ env }: { env: any }) {
         {act.components?.length > 0 && (
           <div className="mt-2">
             <p className="text-[10px] text-[#555] mb-1.5">Actions</p>
-            <div className="flex flex-wrap gap-1">{act.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-purple-950/30 text-purple-400 rounded">{c}</span>)}</div>
+            <div className="flex flex-wrap gap-1">{act.components.map((c: any, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-purple-950/30 text-purple-400 rounded">{compLabel(c)}</span>)}</div>
           </div>
         )}
         <p className="text-[12px] text-[#888] leading-relaxed mt-1">
@@ -1015,7 +1181,7 @@ function DocsView({ env }: { env: any }) {
         {reward.components?.length > 0 && (
           <div className="mt-2">
             <p className="text-[10px] text-[#555] mb-1.5">Reward Components</p>
-            <div className="flex flex-wrap gap-1">{reward.components.map((c: string, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-yellow-950/30 text-yellow-400 rounded">{c}</span>)}</div>
+            <div className="flex flex-wrap gap-1">{reward.components.map((c: any, i: number) => <span key={i} className="text-[10px] px-2 py-0.5 bg-yellow-950/30 text-yellow-400 rounded">{compLabel(c)}</span>)}</div>
           </div>
         )}
       </section>
@@ -1157,14 +1323,15 @@ function DocsView({ env }: { env: any }) {
 
       {/* Usage */}
       <section className="space-y-2">
-        <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Usage (Python SDK)</h3>
-        <pre className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4 text-xs text-[#bbb] overflow-x-auto">{`import kualia
+        <h3 className="text-sm font-semibold border-b border-[#1a1a1a] pb-1">Usage (Gymnasium)</h3>
+        <pre className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-4 text-xs text-[#bbb] overflow-x-auto">{`# After downloading/exporting the environment
+from env import ${env.slug ? env.slug.replace(/-/g, '_').replace(/\s/g, '_') : 'CustomEnv'}
 
-env = kualia.make('${env.slug || "your-env"}', api_key='YOUR_KEY')
+env = ${env.slug ? env.slug.replace(/-/g, '_').replace(/\s/g, '_') : 'CustomEnv'}()
 obs, info = env.reset(seed=42)
 
 for step in range(${episode.max_steps || env.max_steps || 1000}):
-    action = env.action_space.sample()  # or your trained agent
+    action = env.action_space.sample()
     obs, reward, terminated, truncated, info = env.step(action)
     if terminated or truncated:
         obs, info = env.reset()`}</pre>
@@ -1230,7 +1397,7 @@ function DashboardView({ env, spec, tests }: { env: any; spec: any; tests: any[]
       <div className="border border-[#1a1a1a] rounded-lg p-4">
         <h4 className="text-xs font-medium flex items-center gap-1.5 mb-3"><Target size={12} className="text-yellow-400"/> Reward Function</h4>
         {(rewardFn.type||env?.reward_description)&&<p className="text-[11px] text-[#aaa]">{rewardFn.type||env?.reward_description}</p>}
-        {rewardFn.components?.length>0&&<div className="flex flex-wrap gap-1 mt-2">{rewardFn.components.map((c:string,i:number)=><span key={i} className="text-[9px] px-1.5 py-0.5 bg-yellow-950/30 text-yellow-400 rounded">{c}</span>)}</div>}
+        {rewardFn.components?.length>0&&<div className="flex flex-wrap gap-1 mt-2">{rewardFn.components.map((c:any,i:number)=><span key={i} className="text-[9px] px-1.5 py-0.5 bg-yellow-950/30 text-yellow-400 rounded">{compLabel(c)}</span>)}</div>}
       </div>
       <div className="border border-[#1a1a1a] rounded-lg p-4">
         <h4 className="text-xs font-medium flex items-center gap-1.5 mb-3"><Layers size={12} className="text-cyan-400"/> Episode</h4>
@@ -1243,15 +1410,21 @@ function DashboardView({ env, spec, tests }: { env: any; spec: any; tests: any[]
   );
 }
 
+function compLabel(c: any): string {
+  if (typeof c === "string") return c;
+  if (c && typeof c === "object") return c.name || c.label || JSON.stringify(c);
+  return String(c);
+}
+
 function SpaceCard({ title, icon, space, fallback, color }: { title: string; icon: React.ReactNode; space: any; fallback?: string; color: string }) {
   return (
     <div className="border border-[#1a1a1a] rounded-lg p-4">
       <h4 className="text-xs font-medium flex items-center gap-1.5 mb-3">{icon} {title}</h4>
       <div className="space-y-2">
-        <div className="flex justify-between text-[11px]"><span className="text-[#555]">Type</span><span className="font-mono">{space.type||fallback||"—"}</span></div>
+        <div className="flex justify-between text-[11px]"><span className="text-[#555]">Type</span><span className="font-mono">{String(space.type||fallback||"—")}</span></div>
         {space.shape&&<div className="flex justify-between text-[11px]"><span className="text-[#555]">Shape</span><span className="font-mono">[{Array.isArray(space.shape)?space.shape.join(", "):space.shape}]</span></div>}
         {space.low!==undefined&&<div className="flex justify-between text-[11px]"><span className="text-[#555]">Range</span><span className="font-mono">[{space.low}, {space.high}]</span></div>}
-        {space.components?.length>0&&<div className="mt-2"><p className="text-[10px] text-[#555] mb-1">Components</p><div className="flex flex-wrap gap-1">{space.components.map((c:string,i:number)=><span key={i} className={`text-[9px] px-1.5 py-0.5 rounded bg-${color}-950/30 text-${color}-400`}>{c}</span>)}</div></div>}
+        {space.components?.length>0&&<div className="mt-2"><p className="text-[10px] text-[#555] mb-1">Components</p><div className="flex flex-wrap gap-1">{space.components.map((c:any,i:number)=><span key={i} className={`text-[9px] px-1.5 py-0.5 rounded bg-${color}-950/30 text-${color}-400`}>{compLabel(c)}</span>)}</div></div>}
       </div>
     </div>
   );

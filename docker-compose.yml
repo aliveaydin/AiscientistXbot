@@ -16,8 +16,7 @@ services:
       - ARTICLES_DIR=/app/data/articles
       - DATABASE_URL=sqlite+aiosqlite:////app/data/bot.db
       - FRONTEND_DIST_DIR=./frontend_dist
-      - CLERK_ISSUER=https://fancy-lioness-47.clerk.accounts.dev
-      - CLERK_SECRET_KEY=sk_test_R5bFZT9NE73XH6fXnTfmvpR0F24IWsqwhknqpWAtyc
+      - CLERK_ISSUER=https://clerk.kualia.ai
 
   rlforge:
     build:
@@ -25,13 +24,13 @@ services:
       dockerfile: Dockerfile.rlforge
       args:
         NEXT_PUBLIC_API_URL: http://bot:8000
-        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZmFuY3ktbGlvbmVzcy00Ny5jbGVyay5hY2NvdW50cy5kZXYk
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_live_Y2xlcmsua3VhbGlhLmFpJA
     container_name: kualia-platform
     restart: always
     expose:
       - "3001"
-    environment:
-      - CLERK_SECRET_KEY=sk_test_R5bFZT9NE73XH6fXnTfmvpR0F24IWsqwhknqpWAtyc
+    env_file:
+      - .env.production
     depends_on:
       - bot
 
@@ -41,8 +40,11 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - bot
       - rlforge

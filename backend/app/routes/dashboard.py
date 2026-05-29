@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 from app.database import get_db
 from app.models import Tweet, Reply, Article, ActivityLog
 from app.schemas import DashboardStats, ActivityLogResponse
+from app.auth import require_admin
 
-router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/stats", response_model=DashboardStats)

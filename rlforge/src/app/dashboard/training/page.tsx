@@ -35,7 +35,7 @@ export default function DashboardTrainingPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-  const perPage = 50;
+  const perPage = 10;
 
   const load = useCallback(async () => {
     setLoading(true);

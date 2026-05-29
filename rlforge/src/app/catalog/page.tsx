@@ -22,7 +22,7 @@ export default async function CatalogPage({ searchParams }: Props) {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-16 fade-in">
+    <div className="max-w-6xl mx-auto px-4 md:px-6 py-16 fade-in">
       <h1 className="text-3xl font-bold mb-2">Environment Catalog</h1>
       <p className="text-[#888] mb-8">Browse published RL environments. {data.total} available.</p>
 

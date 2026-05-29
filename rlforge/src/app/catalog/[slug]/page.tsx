@@ -13,7 +13,7 @@ export default async function EnvDetailPage({ params }: Props) {
     env = await getEnvBySlug(slug);
   } catch {
     return (
-      <div className="max-w-6xl mx-auto px-6 py-16">
+      <div className="max-w-6xl mx-auto px-4 md:px-6 py-16">
         <p className="text-[#888]">Environment not found.</p>
         <Link href="/catalog" className="text-sm text-[#555] hover:text-white mt-4 inline-block">Back to Catalog</Link>
       </div>
@@ -23,7 +23,7 @@ export default async function EnvDetailPage({ params }: Props) {
   const tests = env.test_results?.tests || [];
 
   return (
-    <div className="max-w-6xl mx-auto px-6 py-16 fade-in">
+    <div className="max-w-6xl mx-auto px-4 md:px-6 py-16 fade-in">
       <Link href="/catalog" className="text-sm text-[#555] hover:text-white flex items-center gap-1 mb-8">
         <ArrowLeft size={14} /> Back to Catalog
       </Link>

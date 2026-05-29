@@ -393,4 +393,195 @@ class TwitterService:
             return {"success": False, "error": str(e)}
 
 
+class KualiaTwitterService(TwitterService):
+    """Twitter service for the kualia.ai marketing account (separate credentials)."""
+
+    @property
+    def oauth(self) -> OAuth1:
+        if self._oauth is None:
+            self._oauth = OAuth1(
+                settings.kualia_twitter_api_key,
+                settings.kualia_twitter_api_secret,
+                settings.kualia_twitter_access_token,
+                settings.kualia_twitter_access_token_secret,
+            )
+        return self._oauth
+
+    def _get_headers(self) -> dict:
+        return {
+            "Content-Type": "application/json",
+            "User-Agent": "KualiaAI/1.0",
+            "Accept": "application/json",
+        }
+
+    def _upload_media_api(self, image_bytes: bytes, media_type: str = "image/png") -> Optional[str]:
+        """Upload media to Twitter v1.1 media upload API. Returns media_id string."""
+        import base64
+        try:
+            oauth = OAuth1(
+                settings.kualia_twitter_api_key,
+                settings.kualia_twitter_api_secret,
+                settings.kualia_twitter_access_token,
+                settings.kualia_twitter_access_token_secret,
+            )
+            resp = requests.post(
+                "https://upload.twitter.com/1.1/media/upload.json",
+                files={"media": ("image.png", image_bytes, media_type)},
+                auth=oauth,
+                timeout=30,
+            )
+            if resp.status_code in (200, 201):
+                return str(resp.json().get("media_id_string", ""))
+            logger.warning("Media upload failed: %s %s", resp.status_code, resp.text[:200])
+            return None
+        except Exception as e:
+            logger.error("Media upload error: %s", e)
+            return None
+
+    async def upload_media(self, image_bytes: bytes, media_type: str = "image/png") -> Optional[str]:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self._upload_media_api(image_bytes, media_type))
+
+    def _post_tweet_with_media_api(self, text: str, media_ids: list) -> dict:
+        """Post tweet with media attachments via Twitter v2 API."""
+        import time
+        payload = {"text": text}
+        if media_ids:
+            payload["media"] = {"media_ids": media_ids}
+
+        endpoints = [
+            "https://api.x.com/2/tweets",
+            "https://api.twitter.com/2/tweets",
+        ]
+        last_error = ""
+        for endpoint in endpoints:
+            for attempt in range(3):
+                try:
+                    resp = requests.post(
+                        endpoint, json=payload, auth=self.oauth,
+                        headers=self._get_headers(), timeout=30,
+                    )
+                    if resp.status_code in (200, 201):
+                        data = resp.json()
+                        return {"success": True, "tweet_id": data["data"]["id"]}
+                    elif resp.status_code == 429:
+                        time.sleep(10)
+                        continue
+                    elif resp.status_code == 503:
+                        last_error = f"{endpoint}: 503"
+                        time.sleep(5 * (attempt + 1))
+                        continue
+                    else:
+                        last_error = f"{endpoint}: {resp.status_code}: {resp.text[:200]}"
+                        break
+                except requests.exceptions.RequestException as e:
+                    last_error = f"{endpoint}: {str(e)}"
+                    time.sleep(3)
+        return {"success": False, "error": last_error}
+
+    async def post_tweet_with_media(self, text: str, media_ids: list, db: AsyncSession, tweet_db_id: Optional[int] = None) -> dict:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: self._post_tweet_with_media_api(text, media_ids)
+        )
+        if result["success"] and tweet_db_id:
+            from app.models import MarketingTweet
+            db_result = await db.execute(select(MarketingTweet).where(MarketingTweet.id == tweet_db_id))
+            mt = db_result.scalar_one_or_none()
+            if mt:
+                mt.tweet_id = result["tweet_id"]
+                mt.status = "posted"
+                mt.posted_at = datetime.utcnow()
+                await db.commit()
+        return result
+
+    def _search_tweets_api(self, query: str, max_results: int = 10) -> list:
+        """Search recent tweets via Twitter v2 search API."""
+        try:
+            headers = {
+                "Authorization": f"Bearer {settings.kualia_twitter_bearer_token}",
+                "Content-Type": "application/json",
+            }
+            resp = requests.get(
+                "https://api.twitter.com/2/tweets/search/recent",
+                params={
+                    "query": query,
+                    "max_results": min(max_results, 100),
+                    "tweet.fields": "created_at,public_metrics,author_id",
+                    "expansions": "author_id",
+                    "user.fields": "username",
+                },
+                headers=headers,
+                timeout=20,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                tweets = data.get("data", [])
+                users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+                result = []
+                for t in tweets:
+                    author = users.get(t.get("author_id"), {})
+                    result.append({
+                        "id": t["id"],
+                        "text": t.get("text", ""),
+                        "author_username": author.get("username", ""),
+                        "metrics": t.get("public_metrics", {}),
+                        "created_at": t.get("created_at"),
+                    })
+                return result
+            logger.warning("Search returned %s", resp.status_code)
+            return []
+        except Exception as e:
+            logger.error("Search error: %s", e)
+            return []
+
+    async def search_tweets(self, query: str, max_results: int = 10) -> list:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, lambda: self._search_tweets_api(query, max_results))
+
+    def _post_reply_api(self, text: str, in_reply_to_tweet_id: str) -> dict:
+        """Post a reply to a specific tweet via Twitter v2 API."""
+        import time
+        payload = {
+            "text": text,
+            "reply": {"in_reply_to_tweet_id": in_reply_to_tweet_id},
+        }
+        endpoints = [
+            "https://api.x.com/2/tweets",
+            "https://api.twitter.com/2/tweets",
+        ]
+        last_error = ""
+        for endpoint in endpoints:
+            for attempt in range(3):
+                try:
+                    resp = requests.post(
+                        endpoint, json=payload, auth=self.oauth,
+                        headers=self._get_headers(), timeout=30,
+                    )
+                    if resp.status_code in (200, 201):
+                        data = resp.json()
+                        return {"success": True, "reply_id": data["data"]["id"]}
+                    elif resp.status_code == 429:
+                        time.sleep(10)
+                        continue
+                    elif resp.status_code == 503:
+                        last_error = f"{endpoint}: 503"
+                        time.sleep(5 * (attempt + 1))
+                        continue
+                    else:
+                        last_error = f"{endpoint}: {resp.status_code}: {resp.text[:200]}"
+                        break
+                except requests.exceptions.RequestException as e:
+                    last_error = f"{endpoint}: {str(e)}"
+                    time.sleep(3)
+        return {"success": False, "error": last_error}
+
+    async def post_reply(self, text: str, in_reply_to_tweet_id: str, db: AsyncSession = None) -> dict:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None, lambda: self._post_reply_api(text, in_reply_to_tweet_id)
+        )
+
+
 twitter_service = TwitterService()
+kualia_twitter_service = KualiaTwitterService()

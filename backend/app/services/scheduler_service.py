@@ -9,9 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session
 from app.models import Tweet, Reply, Article, ActivityLog, BotSettings, BlogPost
 from app.services.ai_service import ai_service
-from app.services.twitter_service import twitter_service
+from app.services.twitter_service import twitter_service, kualia_twitter_service
 from app.services.article_service import ArticleService
 from app.services.arxiv_service import arxiv_service
+from app.services.gtm_service import gtm_service
+from app.services.engagement_service import engagement_service
+from app.services.visual_engine import visual_engine
+from app.services.strategy_engine import strategy_engine
 from app.config import settings
 
 logger = logging.getLogger("scheduler")
@@ -51,7 +55,7 @@ class SchedulerService:
         return not last_was_thread
 
     async def _post_single_tweet(self, article, model, previous_tweets, db):
-        """Generate and post a single EN tweet + TR translation."""
+        """Generate and post a single EN tweet."""
         tweet_content = await ai_service.generate_tweet(
             article, model=model, previous_tweets=previous_tweets
         )
@@ -66,45 +70,19 @@ class SchedulerService:
         await db.commit()
         await db.refresh(tweet)
 
-        logger.info(f"Generated EN tweet ({len(tweet_content)} chars): {tweet_content[:80]}...")
+        logger.info(f"Generated tweet ({len(tweet_content)} chars): {tweet_content[:80]}...")
 
         post_result = await twitter_service.post_tweet(tweet_content, db, tweet.id)
         if post_result["success"]:
-            logger.info(f"EN tweet posted: {post_result.get('tweet_id', '?')}")
-            db.add(ActivityLog(action="auto_tweet_posted", details=f"[EN] Posted: {tweet_content[:100]}...", status="success"))
+            logger.info(f"Tweet posted: {post_result.get('tweet_id', '?')}")
+            db.add(ActivityLog(action="auto_tweet_posted", details=f"Posted: {tweet_content[:100]}...", status="success"))
         else:
-            logger.warning(f"EN tweet failed: {post_result.get('error', '')[:100]}")
-            db.add(ActivityLog(action="tweet_retry_pending", details=f"[EN] Queued: {post_result.get('error', '')[:150]}", status="warning"))
+            logger.warning(f"Tweet failed: {post_result.get('error', '')[:100]}")
+            db.add(ActivityLog(action="tweet_retry_pending", details=f"Queued: {post_result.get('error', '')[:150]}", status="warning"))
             await db.refresh(tweet)
             if tweet.status == "failed":
                 tweet.status = "queued"
         await db.commit()
-
-        # TR translation
-        try:
-            tr_content = await ai_service.translate_tweet_to_turkish(tweet_content, model=model)
-            if len(tr_content) > 800:
-                tr_content = tr_content[:797] + "..."
-            tr_tweet = Tweet(
-                content=tr_content, article_id=article.id, ai_model_used=model,
-                status="queued", language="tr", parent_tweet_db_id=tweet.id,
-            )
-            db.add(tr_tweet)
-            await db.commit()
-            await db.refresh(tr_tweet)
-            tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
-            if tr_result["success"]:
-                db.add(ActivityLog(action="auto_tweet_posted", details=f"[TR] Posted: {tr_content[:100]}...", status="success"))
-            else:
-                db.add(ActivityLog(action="tweet_retry_pending", details=f"[TR] Queued: {tr_result.get('error', '')[:150]}", status="warning"))
-                await db.refresh(tr_tweet)
-                if tr_tweet.status == "failed":
-                    tr_tweet.status = "queued"
-            await db.commit()
-        except Exception as tr_err:
-            logger.error(f"TR tweet error: {tr_err}")
-            db.add(ActivityLog(action="tr_tweet_error", details=f"TR tweet failed: {str(tr_err)[:200]}", status="error"))
-            await db.commit()
 
         return tweet, tweet_content
 
@@ -162,34 +140,9 @@ class SchedulerService:
             await db.commit()
             db.add(ActivityLog(
                 action="thread_posted",
-                details=f"[EN Thread] {len(thread_tweets)} tweets posted for: {article.title[:60]}",
+                details=f"Thread: {len(thread_tweets)} tweets posted for: {article.title[:60]}",
                 status="success",
             ))
-            await db.commit()
-
-        # TR translations for each thread part
-        try:
-            for i, en_tweet in enumerate(thread_tweets):
-                tr_content = await ai_service.translate_tweet_to_turkish(en_tweet.content, model=model)
-                if len(tr_content) > 800:
-                    tr_content = tr_content[:797] + "..."
-                tr_tweet = Tweet(
-                    content=tr_content, article_id=article.id, ai_model_used=model,
-                    status="queued", language="tr", parent_tweet_db_id=en_tweet.id,
-                    is_thread=True, thread_order=i, thread_id=thread_tweets[0].id if thread_tweets else None,
-                )
-                db.add(tr_tweet)
-                await db.commit()
-                await db.refresh(tr_tweet)
-                tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
-                if not tr_result["success"]:
-                    await db.refresh(tr_tweet)
-                    if tr_tweet.status == "failed":
-                        tr_tweet.status = "queued"
-                    await db.commit()
-        except Exception as tr_err:
-            logger.error(f"TR thread error: {tr_err}")
-            db.add(ActivityLog(action="tr_tweet_error", details=f"TR thread failed: {str(tr_err)[:200]}", status="error"))
             await db.commit()
 
         first_tweet = thread_tweets[0] if thread_tweets else None
@@ -197,7 +150,7 @@ class SchedulerService:
         return first_tweet, first_content
 
     async def generate_and_post_tweet(self):
-        """Main job: Pick an article, decide normal vs thread, generate and post."""
+        """Main job: Pick an article, decide normal vs thread, generate and post EN + TR."""
         logger.info("=== TWEET JOB STARTED ===")
         async with async_session() as db:
             try:
@@ -220,6 +173,28 @@ class SchedulerService:
 
                 tweet, tweet_content = await self._post_single_tweet(article, model, previous_tweets, db)
 
+                # Post Turkish translation of the same tweet
+                if tweet and tweet_content:
+                    try:
+                        tr_content = await ai_service.translate_tweet_to_turkish(tweet_content)
+                        if tr_content and len(tr_content) > 20:
+                            if len(tr_content) > 800:
+                                tr_content = tr_content[:797] + "..."
+                            tr_tweet = Tweet(
+                                content=tr_content, article_id=article.id, ai_model_used=model,
+                                status="queued", language="tr",
+                            )
+                            db.add(tr_tweet)
+                            await db.commit()
+                            await db.refresh(tr_tweet)
+                            tr_result = await twitter_service.post_tweet(tr_content, db, tr_tweet.id)
+                            if tr_result["success"]:
+                                logger.info(f"Turkish tweet posted: {tr_content[:60]}...")
+                            else:
+                                logger.warning(f"Turkish tweet failed: {tr_result.get('error', '')[:100]}")
+                    except Exception as tr_err:
+                        logger.warning(f"Turkish tweet generation/posting failed: {tr_err}")
+
                 # Generate blog articles
                 if tweet:
                     try:
@@ -236,18 +211,8 @@ class SchedulerService:
                             published_at=datetime.utcnow() if auto_pub else None,
                         )
                         db.add(blog_en)
-
-                        tr_blog = await ai_service.generate_blog_post(article, tweet_content, language="tr", model=model)
-                        blog_tr = BlogPost(
-                            tweet_id=tweet.id, article_id=article.id,
-                            title=tr_blog["title"], content=tr_blog["content"],
-                            language="tr", ai_model_used=tr_blog.get("model", model), status=pub_status,
-                            published=auto_pub,
-                            published_at=datetime.utcnow() if auto_pub else None,
-                        )
-                        db.add(blog_tr)
                         await db.commit()
-                        logger.info(f"Blog articles generated: EN='{en_blog['title'][:50]}', TR='{tr_blog['title'][:50]}'")
+                        logger.info(f"Blog article generated: '{en_blog['title'][:60]}'")
                         db.add(ActivityLog(action="blog_generated", details=f"Blog: {en_blog['title'][:80]}", status="success"))
                         await db.commit()
                     except Exception as blog_err:
@@ -552,6 +517,195 @@ class SchedulerService:
                 db.add(log)
                 await db.commit()
 
+    async def gtm_tweet_job(self):
+        """Strategy-driven GTM tweet: ask the strategy engine what to post, then post it."""
+        logger.info("=== GTM TWEET JOB STARTED ===")
+        async with async_session() as db:
+            try:
+                decision = await strategy_engine.decide_content(db)
+                content_type = decision.get("content_type", "educational")
+                custom_topic = decision.get("specific_topic")
+
+                tweet = await gtm_service.generate_gtm_tweet(content_type, db, custom_topic=custom_topic)
+                logger.info("GTM tweet #%s [%s] topic=%s: %s",
+                           tweet.id, content_type, (custom_topic or "auto")[:40], tweet.content[:80])
+
+                include_visual = decision.get("include_visual", False)
+                visual_type = decision.get("visual_type", "infographic")
+                visual_concept = decision.get("visual_concept", "")
+
+                if include_visual and visual_concept:
+                    try:
+                        logger.info("Generating AI visual: type=%s concept=%s", visual_type, visual_concept[:60])
+                        png = await visual_engine.generate_tweet_visual(visual_type, visual_concept)
+                        if png:
+                            filepath = await visual_engine.save_visual(png, f"gtm_{visual_type}")
+                            tweet.media_url = filepath
+                            await db.commit()
+                            logger.info("AI visual saved: %s (%d bytes)", filepath, len(png))
+                    except Exception as ve:
+                        logger.warning("AI visual generation failed: %s", ve)
+                elif content_type == "showcase":
+                    try:
+                        from app.models import RLEnvironment, TrainingRun, ResearchPaper
+
+                        env_count = (await db.execute(
+                            select(func.count(RLEnvironment.id)).where(RLEnvironment.status == "published")
+                        )).scalar() or 0
+                        agent_count = (await db.execute(
+                            select(func.count(TrainingRun.id)).where(TrainingRun.status == "completed")
+                        )).scalar() or 0
+                        paper_count = (await db.execute(
+                            select(func.count(ResearchPaper.id))
+                        )).scalar() or 0
+
+                        png = await visual_engine.generate_stats_card(env_count, agent_count, paper_count)
+                        if png:
+                            filepath = await visual_engine.save_visual(png, "stats")
+                            tweet.media_url = filepath
+                            await db.commit()
+                    except Exception as ve:
+                        logger.warning("Visual generation for showcase tweet failed: %s", ve)
+
+                media_ids = []
+                if tweet.media_url:
+                    try:
+                        with open(tweet.media_url, "rb") as f:
+                            img_bytes = f.read()
+                        mid = await kualia_twitter_service.upload_media(img_bytes)
+                        if mid:
+                            media_ids.append(mid)
+                    except Exception as me:
+                        logger.warning("Media upload failed: %s", me)
+
+                if media_ids:
+                    result = await kualia_twitter_service.post_tweet_with_media(
+                        tweet.content, media_ids, db, tweet.id
+                    )
+                else:
+                    result = await kualia_twitter_service.post_tweet(tweet.content, db, tweet.id)
+                    if result.get("success"):
+                        tweet.tweet_id = result["tweet_id"]
+                        tweet.status = "posted"
+                        tweet.posted_at = datetime.utcnow()
+
+                if result.get("success"):
+                    logger.info("GTM tweet #%s posted: %s", tweet.id, result.get("tweet_id"))
+                    db.add(ActivityLog(action="gtm_tweet_posted", details=f"[GTM {content_type}] {tweet.content[:100]}", status="success"))
+                else:
+                    tweet.status = "failed"
+                    logger.warning("GTM tweet #%s post failed: %s", tweet.id, result.get("error", ""))
+                    db.add(ActivityLog(action="gtm_tweet_failed", details=f"[GTM] Failed: {result.get('error', '')[:150]}", status="error"))
+
+                await db.commit()
+
+                # --- Strategy-driven engagement pass (max 2x/day) ---
+                try:
+                    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                    engagement_runs_today = (await db.execute(
+                        select(func.count(ActivityLog.id)).where(
+                            ActivityLog.action == "gtm_engagement",
+                            ActivityLog.created_at >= today_start,
+                        )
+                    )).scalar() or 0
+
+                    if engagement_runs_today < 2:
+                        eng_decision = await strategy_engine.decide_engagement(db)
+                        custom_queries = eng_decision.get("search_queries", [])
+                        if custom_queries:
+                            engagement_service.override_queries = custom_queries
+
+                        engage_result = await engagement_service.engage_prospects(db, max_actions=10)
+                        discover_result = await engagement_service.discover_prospects(db, max_results=10)
+
+                        engagement_service.override_queries = None
+
+                        details = (
+                            f"Liked {engage_result.get('liked', 0)}, "
+                            f"Replies {engage_result.get('reply_suggestions', 0)}, "
+                            f"Prospects {discover_result.get('discovered', 0)} "
+                            f"[focus: {eng_decision.get('focus', 'general')}]"
+                        )
+                        db.add(ActivityLog(action="gtm_engagement", details=details, status="success"))
+                        await db.commit()
+                        logger.info("Engagement pass: %s", details)
+                    else:
+                        logger.info("Engagement pass skipped (already ran %d/2 today)", engagement_runs_today)
+                except Exception as eng_err:
+                    logger.warning("Engagement pass error (non-fatal): %s", eng_err)
+
+            except Exception as e:
+                logger.error("GTM TWEET JOB ERROR: %s", e, exc_info=True)
+                db.add(ActivityLog(action="gtm_tweet_error", details=f"Error: {str(e)[:200]}", status="error"))
+                await db.commit()
+
+    async def gtm_evaluation_job(self):
+        """Weekly strategy review — AI reviews KPIs, decides to continue/adjust/pivot."""
+        logger.info("=== GTM STRATEGY REVIEW STARTED ===")
+        async with async_session() as db:
+            try:
+                result = await strategy_engine.review_strategy(db)
+                verdict = result.get("verdict", "unknown")
+                score = result.get("score", 0)
+                summary = f"Verdict: {verdict}, Score: {score}/100"
+                logger.info("Strategy review complete: %s", summary)
+                db.add(ActivityLog(action="gtm_strategy_review", details=summary, status="success"))
+                await db.commit()
+            except Exception as e:
+                logger.error("GTM STRATEGY REVIEW ERROR: %s", e, exc_info=True)
+                db.add(ActivityLog(action="gtm_strategy_review_error", details=f"Error: {str(e)[:200]}", status="error"))
+                await db.commit()
+
+    async def showcase_job(self):
+        """Generate a showcase tweet with a visual from platform data."""
+        logger.info("=== SHOWCASE JOB STARTED ===")
+        async with async_session() as db:
+            try:
+                tweet = await gtm_service.generate_gtm_tweet("showcase", db)
+
+                from app.models import RLEnvironment, TrainingRun, ResearchPaper
+                env_count = (await db.execute(
+                    select(func.count(RLEnvironment.id)).where(RLEnvironment.status == "published")
+                )).scalar() or 0
+                agent_count = (await db.execute(
+                    select(func.count(TrainingRun.id)).where(TrainingRun.status == "completed")
+                )).scalar() or 0
+                paper_count = (await db.execute(
+                    select(func.count(ResearchPaper.id))
+                )).scalar() or 0
+
+                png = await visual_engine.generate_stats_card(env_count, agent_count, paper_count)
+                if png:
+                    mid = await kualia_twitter_service.upload_media(png)
+                    if mid:
+                        result = await kualia_twitter_service.post_tweet_with_media(
+                            tweet.content, [mid], db, tweet.id
+                        )
+                        if result.get("success"):
+                            logger.info("Showcase tweet posted with visual: %s", result.get("tweet_id"))
+                            db.add(ActivityLog(action="showcase_posted", details=f"Showcase: {tweet.content[:100]}", status="success"))
+                        else:
+                            tweet.status = "failed"
+                            db.add(ActivityLog(action="showcase_failed", details=f"Failed: {result.get('error', '')[:150]}", status="error"))
+                        await db.commit()
+                        return
+
+                result = await kualia_twitter_service.post_tweet(tweet.content, db, tweet.id)
+                if result.get("success"):
+                    tweet.tweet_id = result["tweet_id"]
+                    tweet.status = "posted"
+                    tweet.posted_at = datetime.utcnow()
+                    db.add(ActivityLog(action="showcase_posted", details=f"Showcase (no visual): {tweet.content[:100]}", status="success"))
+                else:
+                    tweet.status = "failed"
+                    db.add(ActivityLog(action="showcase_failed", details=f"Failed: {result.get('error', '')[:150]}", status="error"))
+                await db.commit()
+
+            except Exception as e:
+                logger.error("SHOWCASE JOB ERROR: %s", e, exc_info=True)
+                db.add(ActivityLog(action="showcase_error", details=f"Error: {str(e)[:200]}", status="error"))
+                await db.commit()
+
     async def fetch_classic_papers(self):
         """Fetch notable AI papers from the last 10 years."""
         logger.info("=== CLASSIC PAPERS FETCH JOB STARTED ===")
@@ -650,12 +804,107 @@ class SchedulerService:
             replace_existing=True,
         )
 
+        # GTM Marketing: auto-tweet every 8 hours (3 per day)
+        self.scheduler.add_job(
+            self.gtm_tweet_job,
+            IntervalTrigger(hours=8),
+            id="gtm_tweet_job",
+            name="GTM Tweet Poster (8h)",
+            replace_existing=True,
+        )
+
+        # GTM Showcase: daily showcase tweet with visual
+        self.scheduler.add_job(
+            self.showcase_job,
+            IntervalTrigger(hours=24),
+            id="showcase_job",
+            name="GTM Showcase Tweet (Daily)",
+            replace_existing=True,
+        )
+
+        # GTM Evaluation: weekly strategy report
+        self.scheduler.add_job(
+            self.gtm_evaluation_job,
+            IntervalTrigger(hours=168),
+            id="gtm_evaluation_job",
+            name="GTM Weekly Evaluation",
+            replace_existing=True,
+        )
+
+        # Email Marketing: weekly tips email
+        self.scheduler.add_job(
+            self.email_weekly_tips_job,
+            IntervalTrigger(hours=168),
+            id="email_tips_job",
+            name="Email Weekly Tips",
+            replace_existing=True,
+        )
+
+        # Email Marketing: re-engagement check every 3 days
+        self.scheduler.add_job(
+            self.email_reengagement_job,
+            IntervalTrigger(hours=72),
+            id="email_reengagement_job",
+            name="Email Re-engagement Check",
+            replace_existing=True,
+        )
+
+        # Email Marketing: performance evaluation weekly
+        self.scheduler.add_job(
+            self.email_evaluation_job,
+            IntervalTrigger(hours=168),
+            id="email_eval_job",
+            name="Email Performance Eval",
+            replace_existing=True,
+        )
+
         self.scheduler.start()
         self.is_running = True
 
         logger.info("Scheduler started with all jobs:")
         for job in self.scheduler.get_jobs():
             logger.info(f"  Job: {job.id} -> next run: {job.next_run_time}")
+
+    # ── Email Marketing Agent Jobs ──
+
+    async def email_weekly_tips_job(self):
+        """Generate and send AI-written weekly RL tip email."""
+        from app.services.agent_registry import agent_registry
+        if not agent_registry.get_param("email_marketing", "auto_tips", True):
+            logger.info("[EmailAgent] Auto tips disabled, skipping")
+            return
+        try:
+            from app.services.email_marketing_service import email_marketing_agent
+            result = await email_marketing_agent.generate_tips_campaign()
+            logger.info("[EmailAgent] Tips result: %s", result)
+        except Exception as e:
+            logger.error("[EmailAgent] Tips job failed: %s", e)
+
+    async def email_reengagement_job(self):
+        """Check for inactive users and send re-engagement emails."""
+        from app.services.agent_registry import agent_registry
+        if not agent_registry.get_param("email_marketing", "auto_reengagement", True):
+            logger.info("[EmailAgent] Auto re-engagement disabled, skipping")
+            return
+        try:
+            from app.services.email_marketing_service import email_marketing_agent
+            result = await email_marketing_agent.run_reengagement_check()
+            logger.info("[EmailAgent] Re-engagement result: %s", result)
+        except Exception as e:
+            logger.error("[EmailAgent] Re-engagement job failed: %s", e)
+
+    async def email_evaluation_job(self):
+        """Evaluate email campaign performance and log insights."""
+        from app.services.agent_registry import agent_registry
+        if not agent_registry.get_param("email_marketing", "auto_evaluate", True):
+            logger.info("[EmailAgent] Auto evaluation disabled, skipping")
+            return
+        try:
+            from app.services.email_marketing_service import email_marketing_agent
+            result = await email_marketing_agent.evaluate_performance()
+            logger.info("[EmailAgent] Evaluation: %s", str(result)[:500])
+        except Exception as e:
+            logger.error("[EmailAgent] Evaluation job failed: %s", e)
 
     async def run_initial_jobs(self):
         """Run retry and arxiv fetch on startup. Metrics run once daily to save API reads."""

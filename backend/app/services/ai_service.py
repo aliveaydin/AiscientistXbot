@@ -1,10 +1,14 @@
+import asyncio
 import json
+import logging
 import random
 from typing import Optional, List
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 from app.config import settings
 from app.models import Article
+
+_log = logging.getLogger("ai_service")
 
 
 TWEET_SYSTEM_PROMPT = """You are an AI researcher with a PhD, active on Twitter/X. You share insights with your followers — researchers, engineers, and curious minds.
@@ -222,17 +226,50 @@ class AIService:
             usage_acc.add(response.usage.prompt_tokens or 0, response.usage.completion_tokens or 0, model)
         return response.choices[0].message.content.strip()
 
+    @staticmethod
+    def _claude_supports_temperature(model: str) -> bool:
+        """Claude Opus 4.8+ deprecated the temperature parameter."""
+        m = (model or "").lower()
+        return "opus-4-8" not in m
+
+    async def _call_claude_strict(self, system_prompt: str, user_prompt: str, model: str = None,
+                                   max_tokens: int = 500, usage_acc=None, attempts: int = 3) -> str:
+        """Mandatory Claude Opus 4.8 call with retries on transient errors.
+
+        Used for all critical AI work (env generation, paper writing, research
+        agents, blog, tweets). Never falls back to a different model — if Claude
+        is genuinely unreachable after retries, it raises so the failure is loud
+        instead of silently switching models.
+        """
+        if not settings.anthropic_api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not configured; Claude Opus 4.8 is required.")
+        model = model or settings.anthropic_model
+        last_err = None
+        for i in range(attempts):
+            try:
+                return await self._call_claude(
+                    system_prompt, user_prompt, model=model, max_tokens=max_tokens, usage_acc=usage_acc,
+                )
+            except Exception as e:
+                last_err = e
+                _log.warning("Claude Opus 4.8 attempt %d/%d failed: %s", i + 1, attempts, str(e)[:180])
+                if i < attempts - 1:
+                    await asyncio.sleep(2 * (i + 1))
+        raise last_err
+
     async def _call_claude(self, system_prompt: str, user_prompt: str, model: str = None, max_tokens: int = 500, usage_acc=None) -> str:
         model = model or settings.anthropic_model
-        response = await self.anthropic_client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=[
+        kwargs = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": [
                 {"role": "user", "content": user_prompt},
             ],
-            temperature=0.8,
-        )
+        }
+        if self._claude_supports_temperature(model):
+            kwargs["temperature"] = 0.8
+        response = await self.anthropic_client.messages.create(**kwargs)
         if usage_acc and response.usage:
             usage_acc.add(response.usage.input_tokens or 0, response.usage.output_tokens or 0, model)
         return response.content[0].text.strip()
@@ -267,35 +304,15 @@ class AIService:
         return text.encode("utf-8", errors="replace").decode("utf-8")
 
     async def _call_ai(self, system_prompt: str, user_prompt: str, model: Optional[str] = None, max_tokens: int = 1000, usage_acc=None) -> str:
-        """Route to the right AI provider for tweet/bot operations.
-        Primary: Claude Opus 4.8. Kimi/GPT remain only as automatic fallback
-        if Claude is unavailable (missing key, outage, or no credits).
+        """All AI work runs on Claude Opus 4.8 (mandatory, with retries).
+
+        No silent fallback to Kimi/GPT — Opus 4.8 is required everywhere.
         """
-        import logging
-        _log = logging.getLogger("ai_service")
-
-        if settings.anthropic_api_key:
-            try:
-                result = await self._call_claude(system_prompt, user_prompt, model=settings.anthropic_model, max_tokens=max_tokens, usage_acc=usage_acc)
-                return self._sanitize_text(result)
-            except Exception as e:
-                _log.warning("Claude Opus 4.8 failed, trying Kimi: %s", e)
-
-        if settings.kimi_api_key:
-            try:
-                result = await self._call_kimi(system_prompt, user_prompt, max_tokens=max_tokens, usage_acc=usage_acc)
-                return self._sanitize_text(result)
-            except Exception as e:
-                _log.warning("Kimi failed, trying GPT-4: %s", e)
-
-        if settings.openai_api_key:
-            try:
-                result = await self._call_openai(system_prompt, user_prompt, model="gpt-4", max_tokens=max_tokens, usage_acc=usage_acc)
-                return self._sanitize_text(result)
-            except Exception as e:
-                _log.warning("GPT-4 also failed: %s", e)
-
-        raise RuntimeError("No AI provider available")
+        result = await self._call_claude_strict(
+            system_prompt, user_prompt, model=settings.anthropic_model,
+            max_tokens=max_tokens, usage_acc=usage_acc,
+        )
+        return self._sanitize_text(result)
 
     async def generate_tweet(
         self,
@@ -455,58 +472,13 @@ Your background knowledge on this topic:
 
         system = BLOG_EN_SYSTEM_PROMPT if language == "en" else BLOG_TR_SYSTEM_PROMPT
 
-        # Try Claude Opus 4.8 first (primary model for all AI work)
-        if settings.anthropic_api_key:
-            try:
-                logger.info(f"Generating {language.upper()} blog with Claude Opus 4.8")
-                result = await self._call_claude(system, user_prompt, model=settings.anthropic_model, max_tokens=4096)
-                lines = result.strip().split("\n", 1)
-                title = lines[0].strip().lstrip("#").strip()
-                body = lines[1].strip() if len(lines) > 1 else result
-                return {"title": title, "content": body, "model": settings.anthropic_model}
-            except Exception as e:
-                logger.warning(f"Claude Opus 4.8 failed, trying Kimi: {e}")
-
-        # Fallback: Kimi K2.5 long-form
-        if settings.kimi_api_key:
-            try:
-                logger.info(f"Generating {language.upper()} blog with Kimi K2.5 (fallback)")
-                result = await self._call_kimi(system, user_prompt, max_tokens=4096)
-                lines = result.strip().split("\n", 1)
-                title = lines[0].strip().lstrip("#").strip()
-                body = lines[1].strip() if len(lines) > 1 else result
-                return {"title": title, "content": body, "model": settings.kimi_model}
-            except Exception as e:
-                logger.warning(f"Kimi K2.5 failed, falling back to default: {e}")
-
-        # Final fallback to default AI model
-        logger.info(f"Falling back to default model for {language.upper()} blog")
-        fallback_model = model or settings.default_ai_model
-        if self._is_claude_model(fallback_model):
-            response = await self.anthropic_client.messages.create(
-                model=fallback_model,
-                max_tokens=4096,
-                system=system,
-                messages=[{"role": "user", "content": user_prompt}],
-                temperature=0.8,
-            )
-            result = response.content[0].text.strip()
-        else:
-            response = await self.openai_client.chat.completions.create(
-                model=fallback_model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=4096,
-                temperature=0.8,
-            )
-            result = response.choices[0].message.content.strip()
-
+        # Blog posts are generated exclusively on Claude Opus 4.8 (mandatory, with retries).
+        logger.info(f"Generating {language.upper()} blog with Claude Opus 4.8")
+        result = await self._call_claude_strict(system, user_prompt, model=settings.anthropic_model, max_tokens=4096)
         lines = result.strip().split("\n", 1)
         title = lines[0].strip().lstrip("#").strip()
         body = lines[1].strip() if len(lines) > 1 else result
-        return {"title": title, "content": body, "model": fallback_model}
+        return {"title": title, "content": body, "model": settings.anthropic_model}
 
     async def summarize_article(self, article: Article, model: Optional[str] = None) -> list:
         """Summarize article into key insights."""

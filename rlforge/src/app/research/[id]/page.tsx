@@ -4,25 +4,27 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
-  ArrowLeft, Play, Loader2, CheckCircle, BookOpen,
+  ArrowLeft, Play, Loader2, CheckCircle, BookOpen, Plus, RotateCcw,
   FlaskConical, Cpu, BarChart3, FileText, ChevronRight,
   ExternalLink, Beaker, Brain, Wrench, Download, Trash2,
 } from "lucide-react";
 import {
   getLabProject, getLabChatboard, getLabEnvironments,
   getLabTrainingRuns, getLabPaper, getLabReferences,
-  runLabPhase, runLabAll, deleteLabEnvironment,
+  runLabPhase, runLabAll, deleteLabEnvironment, addLabReferences,
+  replayLabPhase,
 } from "@/lib/api";
 
-const PHASES = ["research", "design", "experiment", "analyze", "write", "review"];
+const PHASES = ["hypothesis", "design", "experiment", "analyze", "write", "review"];
 
 const phaseConfig: Record<string, { label: string; icon: typeof Brain; desc: string }> = {
-  research: { label: "Research", icon: Brain, desc: "Literature & hypothesis" },
-  design:   { label: "Design", icon: Wrench, desc: "Generate environments" },
+  hypothesis: { label: "Hypothesis", icon: Brain, desc: "Formulate hypothesis & specs" },
+  research:   { label: "Research", icon: Brain, desc: "Literature & hypothesis" },
+  design:     { label: "Design", icon: Wrench, desc: "Generate environments" },
   experiment: { label: "Experiment", icon: Beaker, desc: "Train agents" },
-  analyze:  { label: "Analyze", icon: BarChart3, desc: "Interpret results" },
-  write:    { label: "Write", icon: FileText, desc: "Draft paper" },
-  review:   { label: "Review", icon: CheckCircle, desc: "Review & finalize" },
+  analyze:    { label: "Analyze", icon: BarChart3, desc: "Interpret results" },
+  write:      { label: "Research & Write", icon: FileText, desc: "Literature search & paper" },
+  review:     { label: "Review", icon: CheckCircle, desc: "Review & finalize" },
 };
 
 const agentColors: Record<string, { text: string; border: string; bg: string }> = {
@@ -48,6 +50,7 @@ export default function ResearchProjectPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [runningAll, setRunningAll] = useState(false);
+  const [replayingPhase, setReplayingPhase] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("feed");
   const chatEnd = useRef<HTMLDivElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
@@ -128,8 +131,13 @@ export default function ResearchProjectPage() {
         setRunning,
         capturedPhase,
       );
-    } catch {
+    } catch (e: any) {
       setRunning(false);
+      if (e.code === "INSUFFICIENT_CREDITS") {
+        alert(`Not enough credits (balance: $${e.balance?.toFixed(2) || '0.00'}). Visit Settings → Subscription to manage your plan.`);
+      } else if (e.code === "PLAN_LIMIT_REACHED") {
+        alert("You've reached the limit for your plan. Visit Settings → Subscription to upgrade.");
+      }
     }
   }
 
@@ -149,15 +157,32 @@ export default function ResearchProjectPage() {
     }
   }
 
-  const currentPhaseIdx = project ? PHASES.indexOf(project.current_phase) : -1;
+  async function handleReplayPhase(phase: string) {
+    if (!project) return;
+    setReplayingPhase(phase);
+    try {
+      await replayLabPhase(projectId, phase);
+      startPolling(
+        (proj) => !proj.phase_running,
+        (v) => { if (!v) setReplayingPhase(null); },
+        project.current_phase,
+      );
+    } catch {
+      setReplayingPhase(null);
+    }
+  }
+
+  const effectivePhase = project?.current_phase === "research" ? "hypothesis" : project?.current_phase;
+  const currentPhaseIdx = project ? PHASES.indexOf(effectivePhase) : -1;
   const isCompleted = project?.status === "completed";
   const isActive = project?.status === "active";
-  const phaseRunning = project?.phase_running || running || runningAll;
+  const phaseRunning = project?.phase_running || running || runningAll || !!replayingPhase;
 
   const completedPhases = useMemo(() => {
     if (!project) return new Set<string>();
     if (isCompleted) return new Set(PHASES);
-    const idx = PHASES.indexOf(project.current_phase);
+    const phase = project.current_phase === "research" ? "hypothesis" : project.current_phase;
+    const idx = PHASES.indexOf(phase);
     return new Set(PHASES.slice(0, idx));
   }, [project, isCompleted]);
 
@@ -216,23 +241,36 @@ export default function ResearchProjectPage() {
             const Icon = cfg.icon;
             const isCurrent = project.current_phase === phase && !isCompleted;
             const isDone = completedPhases.has(phase);
+            const isReplaying = replayingPhase === phase;
             return (
               <div key={phase} className="flex items-center flex-1">
-                <div className={`flex flex-col items-center flex-1 ${
+                <div className={`flex flex-col items-center flex-1 relative group ${
                   isCurrent ? "opacity-100" : isDone ? "opacity-80" : "opacity-30"
                 }`}>
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center mb-1.5 transition-all ${
+                    isReplaying ? "bg-amber-900/50 text-amber-400 border border-amber-700 animate-pulse" :
                     isCurrent ? "bg-white text-black ring-2 ring-white/20" :
                     isDone ? "bg-green-900/50 text-green-400 border border-green-800" :
                     "bg-[#111] text-[#555] border border-[#1a1a1a]"
                   }`}>
-                    {isDone ? <CheckCircle size={16} /> : isCurrent && (running || runningAll)
+                    {isReplaying ? <Loader2 size={16} className="animate-spin" />
+                      : isDone ? <CheckCircle size={16} /> : isCurrent && (running || runningAll)
                       ? <Loader2 size={16} className="animate-spin" /> : <Icon size={16} />}
                   </div>
-                  <span className={`text-[11px] font-medium ${isCurrent ? "text-white" : isDone ? "text-green-400" : "text-[#555]"}`}>
+                  <span className={`text-[11px] font-medium ${isReplaying ? "text-amber-400" : isCurrent ? "text-white" : isDone ? "text-green-400" : "text-[#555]"}`}>
                     {cfg.label}
                   </span>
                   <span className="text-[9px] text-[#444] hidden sm:block">{cfg.desc}</span>
+                  {isDone && (
+                    <button
+                      onClick={() => handleReplayPhase(phase)}
+                      disabled={phaseRunning}
+                      className="mt-1 flex items-center gap-0.5 text-[9px] text-white hover:text-green-400 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      title={`Re-run ${cfg.label}`}
+                    >
+                      <RotateCcw size={9} /> Re-run
+                    </button>
+                  )}
                 </div>
                 {i < PHASES.length - 1 && (
                   <div className={`h-px flex-1 mx-1 mt-[-18px] ${isDone ? "bg-green-800" : "bg-[#1a1a1a]"}`} />
@@ -303,7 +341,7 @@ export default function ResearchProjectPage() {
       }} />}
       {tab === "training" && <TrainingTab runs={trainingRuns} />}
       {tab === "paper" && <PaperTab paper={paper} projectId={projectId} />}
-      {tab === "references" && <ReferencesTab references={references} />}
+      {tab === "references" && <ReferencesTab references={references} projectId={project.id} onRefresh={loadAll} />}
     </div>
   );
 }
@@ -735,34 +773,62 @@ function MarkdownTable({ text }: { text: string }) {
 
 /* ─── References Tab ─────────────────────────────────────────── */
 
-function ReferencesTab({ references }: { references: any[] }) {
-  if (!references.length) {
-    return (
-      <div className="border border-dashed border-[#1a1a1a] rounded-xl p-12 text-center">
-        <BookOpen size={32} className="mx-auto text-[#333] mb-3" />
-        <p className="text-[#555] text-sm">No references yet.</p>
-        <p className="text-[10px] text-[#444] mt-1">Papers are imported from ArXiv during the Research phase.</p>
-      </div>
-    );
+function ReferencesTab({ references, projectId, onRefresh }: { references: any[]; projectId: number; onRefresh: () => void }) {
+  const [adding, setAdding] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  async function handleAddMore() {
+    setAdding(true);
+    setResult(null);
+    try {
+      const data = await addLabReferences(projectId);
+      setResult(`Added ${data.added} new paper(s). Total: ${data.total}`);
+      onRefresh();
+    } catch (e: any) {
+      setResult(`Error: ${e.message}`);
+    } finally {
+      setAdding(false);
+    }
   }
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-[#555] mb-3">{references.length} reference paper(s) from ArXiv</p>
-      {references.map((r: any) => (
-        <div key={r.id} className="flex items-center justify-between border border-[#1a1a1a] rounded-lg p-3 bg-[#0a0a0a] hover:border-[#333] transition-colors">
-          <p className="text-sm text-[#ccc] flex-1 mr-3">{r.article_title}</p>
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-[10px] text-[#555]">{r.article_source}</span>
-            {r.arxiv_url && (
-              <a href={r.arxiv_url} target="_blank" rel="noopener noreferrer"
-                className="text-[10px] text-[#555] hover:text-white flex items-center gap-0.5">
-                ArXiv <ExternalLink size={9} />
-              </a>
-            )}
-          </div>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-[#555]">{references.length} reference paper(s) from ArXiv</p>
+        <button
+          onClick={handleAddMore}
+          disabled={adding}
+          className="flex items-center gap-1.5 text-xs text-[#888] hover:text-white border border-[#1a1a1a] hover:border-[#333] px-3 py-1.5 rounded transition-colors disabled:opacity-40"
+        >
+          {adding ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+          {adding ? "Searching..." : "Search More"}
+        </button>
+      </div>
+      {result && (
+        <p className={`text-xs ${result.startsWith("Error") ? "text-red-400" : "text-green-400"}`}>{result}</p>
+      )}
+      {references.length === 0 ? (
+        <div className="border border-dashed border-[#1a1a1a] rounded-xl p-12 text-center">
+          <BookOpen size={32} className="mx-auto text-[#333] mb-3" />
+          <p className="text-[#555] text-sm">No references yet.</p>
+          <p className="text-[10px] text-[#444] mt-1">ArXiv papers are searched during the Write phase, or click &quot;Search More&quot; above to add manually.</p>
         </div>
-      ))}
+      ) : (
+        references.map((r: any) => (
+          <div key={r.id} className="flex items-center justify-between border border-[#1a1a1a] rounded-lg p-3 bg-[#0a0a0a] hover:border-[#333] transition-colors">
+            <p className="text-sm text-[#ccc] flex-1 mr-3">{r.article_title}</p>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-[10px] text-[#555]">{r.article_source}</span>
+              {r.arxiv_url && (
+                <a href={r.arxiv_url} target="_blank" rel="noopener noreferrer"
+                  className="text-[10px] text-[#555] hover:text-white flex items-center gap-0.5">
+                  ArXiv <ExternalLink size={9} />
+                </a>
+              )}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

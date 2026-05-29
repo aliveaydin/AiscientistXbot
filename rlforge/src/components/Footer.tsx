@@ -2,7 +2,6 @@
 
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
-
 const columns = [
   {
     title: "Product",
@@ -17,15 +16,17 @@ const columns = [
     title: "Developers",
     links: [
       { href: "/docs", label: "Documentation" },
-      { href: "/docs#python-sdk", label: "Python SDK" },
       { href: "/docs#api-reference", label: "API Reference" },
     ],
   },
   {
     title: "Company",
     links: [
+      { href: "/pricing", label: "Pricing" },
       { href: "/sign-up", label: "Get Started" },
       { href: "/sign-in", label: "Sign In" },
+      { href: "/terms", label: "Terms of Service" },
+      { href: "/privacy", label: "Privacy Policy" },
     ],
   },
 ];
@@ -36,10 +37,13 @@ export function Footer() {
 
   return (
     <footer className="border-t border-[#1a1a1a] mt-24">
-      <div className="max-w-6xl mx-auto px-6 py-12">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+      <div className="max-w-6xl mx-auto px-4 md:px-6 py-8 md:py-12">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8 mb-8 md:mb-12">
           <div>
-            <p className="font-bold text-white mb-2">kualia.ai</p>
+            <div className="flex items-center gap-1.5 mb-2">
+              <img src="/logo.svg" alt="Kualia" className="h-7 w-7" />
+              <p className="text-lg font-extrabold text-white tracking-tight">kualia<span className="text-[#666] font-light ml-0.5">.ai</span></p>
+            </div>
             <p className="text-sm text-[#888] leading-relaxed">
               Generate RL environments, train agents, run experiments, and create research papers — all in one platform.
             </p>
