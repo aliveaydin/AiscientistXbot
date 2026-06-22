@@ -6,7 +6,10 @@ services:
     expose:
       - "8000"
     ports:
-      - "8080:8000"
+      # Bind to loopback only — nginx reaches the bot via the internal docker
+      # network (bot:8000); the public host port would otherwise bypass nginx
+      # (TLS, Basic Auth, admin gateway).
+      - "127.0.0.1:8080:8000"
     volumes:
       - bot-data:/app/data
     env_file:
