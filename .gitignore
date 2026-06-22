@@ -46,6 +46,7 @@ backend/data/
 # Secrets — generate on the server, never commit
 nginx/.htpasswd
 nginx/.htpasswd.bak
+nginx/admin_gateway.conf
 
 # Throwaway research/report artifacts
 backend/_rho_grid.py

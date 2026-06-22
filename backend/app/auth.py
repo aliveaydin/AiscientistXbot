@@ -19,6 +19,23 @@ _jwks_cache: dict = {}
 _jwks_fetched_at: float = 0
 _JWKS_TTL = 3600  # re-fetch JWKS every hour
 
+# Admin emails (Clerk-based admin) and the trusted admin-gateway secret.
+ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "aliveaydin@gmail.com").split(",") if e.strip()]
+# nginx injects X-Kualia-Admin: <secret> ONLY on the Basic-Auth-protected admin
+# subdomain (and strips it on the public domain). A matching value means the
+# request already passed the admin gateway, so we treat it as the admin user.
+ADMIN_GATEWAY_SECRET = os.getenv("ADMIN_GATEWAY_SECRET", "")
+
+
+def _gateway_admin(request: Request) -> Optional[dict]:
+    if not ADMIN_GATEWAY_SECRET:
+        return None
+    header = request.headers.get("x-kualia-admin", "")
+    if header and header == ADMIN_GATEWAY_SECRET:
+        admin_email = ADMIN_EMAILS[0] if ADMIN_EMAILS else "admin@kualia.ai"
+        return {"clerk_user_id": "admin-gateway", "email": admin_email, "claims": {"gateway": True}}
+    return None
+
 
 def _get_clerk_issuer() -> str:
     """Return the Clerk issuer URL, e.g. https://your-instance.clerk.accounts.dev"""
@@ -116,6 +133,10 @@ async def get_current_user(request: Request) -> dict:
     Dependency: requires a valid Clerk JWT.
     Returns dict with at least 'clerk_user_id' (the Clerk `sub` claim).
     """
+    gw = _gateway_admin(request)
+    if gw:
+        return gw
+
     token = _extract_bearer(request)
     if not token:
         raise HTTPException(status_code=401, detail="Missing authorization token")
@@ -129,9 +150,6 @@ async def get_current_user(request: Request) -> dict:
         "email": claims.get("email"),
         "claims": claims,
     }
-
-
-ADMIN_EMAILS = [e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "aliveaydin@gmail.com").split(",") if e.strip()]
 
 
 async def require_admin(request: Request) -> dict:
@@ -151,6 +169,10 @@ async def get_optional_user(request: Request) -> Optional[dict]:
     Dependency: optionally extracts user from Clerk JWT.
     Returns None if no token or invalid token (doesn't raise).
     """
+    gw = _gateway_admin(request)
+    if gw:
+        return gw
+
     token = _extract_bearer(request)
     if not token:
         return None
