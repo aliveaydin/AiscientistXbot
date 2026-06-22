@@ -20,7 +20,17 @@ docker compose up -d --build
 echo "==> containers:"
 docker compose ps
 
-echo "==> health:"
-curl -s -o /dev/null -w "bot /health: %{http_code}\n" http://127.0.0.1:8080/health || true
+echo "==> waiting for bot to become healthy..."
+code=000
+for i in $(seq 1 20); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/health || echo 000)
+  if [ "$code" = "200" ]; then break; fi
+  sleep 2
+done
+echo "bot /health: $code"
+if [ "$code" != "200" ]; then
+  echo "!! bot did not report healthy after ~40s — check: docker compose logs --tail=50 bot" >&2
+  exit 1
+fi
 
 echo "==> deploy complete."
