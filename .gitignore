@@ -42,3 +42,14 @@ backend/data/
 
 # Production env
 .env.production
+
+# Secrets — generate on the server, never commit
+nginx/.htpasswd
+nginx/.htpasswd.bak
+
+# Throwaway research/report artifacts
+backend/_rho_grid.py
+backend/_rho_report.py
+backend/_rho_grid_result.json
+rho_sweep_report.pdf
+rho_sweep_report.png

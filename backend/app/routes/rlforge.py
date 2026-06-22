@@ -15,7 +15,7 @@ from app.models import (
     RLEnvironment, BuilderConversation, TrainingRun,
     EnvVersion, SkillCache, User,
 )
-from app.auth import get_optional_user, get_current_user
+from app.auth import get_optional_user, get_current_user, require_admin
 from app.services.architect_service import architect_service
 from app.services.sandbox_runner import sandbox_runner
 from app.services.training_service import training_service
@@ -818,6 +818,74 @@ async def start_training(request: Request, env_id: int, data: dict = None, db: A
     except Exception as e:
         logger.error("Training start failed: %s", e)
         raise HTTPException(500, f"Training failed: {e}")
+
+
+@router.post("/rho-sweep")
+@limiter.limit("3/minute")
+async def start_rho_sweep(request: Request, data: dict = None,
+                          admin: dict = Depends(require_admin),
+                          db: AsyncSession = Depends(get_db)):
+    """Launch a rho (non-stationarity rate) sweep across env siblings.
+
+    ADMIN-ONLY internal research tool: launches many training runs at once, so it
+    is gated behind require_admin and rate-limited. Per-run resource caps prevent
+    a single call from exhausting the box.
+    Each (env x rho x algorithm x seed) becomes one training run created via the
+    concurrency queue, so they run sequentially without overloading the box.
+    Body: {project_id?, env_ids?, rho_values:[...], algorithms:[...],
+           n_seeds:int, timesteps:int, n_eval_episodes:int}
+    """
+    data = data or {}
+    rho_values = (data.get("rho_values") or [0.0, 0.25, 0.5, 0.75, 1.0])[:11]
+    algorithms = [a.upper() for a in (data.get("algorithms") or ["PPO"])]
+    n_seeds = min(5, max(1, int(data.get("n_seeds", 2))))
+    timesteps = min(200000, max(1000, int(data.get("timesteps", 100000))))
+    n_eval_episodes = min(50, max(1, int(data.get("n_eval_episodes", 10))))
+
+    env_ids = data.get("env_ids")
+    if env_ids:
+        q = select(RLEnvironment).where(RLEnvironment.id.in_([int(x) for x in env_ids]))
+    elif data.get("project_id"):
+        q = select(RLEnvironment).where(RLEnvironment.research_project_id == int(data["project_id"]))
+    else:
+        raise HTTPException(400, "Provide project_id or env_ids")
+
+    envs = [e for e in (await db.execute(q)).scalars().all() if e.code and "class" in e.code]
+    if not envs:
+        raise HTTPException(404, "No usable environments found")
+
+    total = len(envs) * len(rho_values) * len(algorithms) * n_seeds
+    if total > 300:
+        raise HTTPException(400, f"Sweep too large ({total} runs); narrow the grid.")
+
+    created = []
+    for env in envs:
+        for rho in rho_values:
+            for algo in algorithms:
+                for seed in range(n_seeds):
+                    config = {
+                        "total_timesteps": timesteps,
+                        "algorithm": algo,
+                        "n_eval_episodes": n_eval_episodes,
+                        "seed": seed,
+                        "variant_role": getattr(env, "variant_role", None),
+                        "env_kwargs": {"rho": float(rho)},
+                    }
+                    try:
+                        run = await training_service.start_training(env.id, config, db)
+                        created.append({
+                            "run_id": run.id, "env_id": env.id, "rho": float(rho),
+                            "algorithm": algo, "seed": seed, "status": run.status,
+                        })
+                    except Exception as e:
+                        logger.error("rho-sweep run failed (env %s rho %s algo %s): %s", env.id, rho, algo, e)
+    running = sum(1 for c in created if c["status"] == "running")
+    queued = sum(1 for c in created if c["status"] == "queued")
+    return {
+        "created": len(created), "running": running, "queued": queued,
+        "rho_values": rho_values, "algorithms": algorithms, "n_seeds": n_seeds,
+        "timesteps": timesteps, "envs": [e.id for e in envs], "runs": created,
+    }
 
 
 @router.get("/train/{env_id}/history")
